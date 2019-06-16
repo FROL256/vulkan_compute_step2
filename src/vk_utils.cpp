@@ -164,10 +164,10 @@ VkPhysicalDevice vk_utils::FindPhysicalDevice(VkInstance a_instance, bool a_prin
   we obtain a list of physical device limitations. For this application, we launch a compute shader,
   and the maximum size of the workgroups and total number of compute shader invocations is limited by the physical device,
   and we should ensure that the limitations named maxComputeWorkGroupCount, maxComputeWorkGroupInvocations and
-  maxComputeWorkGroupSize are not exceeded by our application.  Moreover, we are using a storage buffer in the compute shader,
+  maxComputeWorkGroupSize are not exceeded by our application.  Moreover, we are using a storage bufferStaging in the compute shader,
   and we should ensure that it is not larger than the device can handle, by checking the limitation maxStorageBufferRange.
 
-  However, in our application, the workgroup size and total number of shader invocations is relatively small, and the storage buffer is
+  However, in our application, the workgroup size and total number of shader invocations is relatively small, and the storage bufferStaging is
   not that large, and thus a vast majority of devices will be able to handle it. This can be verified by looking at some devices at_
   http://vulkan.gpuinfo.org/
 

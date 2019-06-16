@@ -26,8 +26,8 @@ constexpr bool enableValidationLayers = true;
 
 /*
 The application launches a compute shader that renders the mandelbrot set,
-by rendering it into a storage buffer.
-The storage buffer is then read from the GPU, and saved as .png. 
+by rendering it into a storage bufferStaging.
+The storage bufferStaging is then read from the GPU, and saved as .png.
 */
 class ComputeApplication
 {
@@ -64,7 +64,7 @@ private:
     VkShaderModule   computeShaderModule;
 
     /*
-    The command buffer is used to record commands, that will be submitted to a queue.
+    The command bufferStaging is used to record commands, that will be submitted to a queue.
 
     To allocate such command buffers, we use a command pool.
     */
@@ -84,18 +84,19 @@ private:
     VkDescriptorSetLayout descriptorSetLayout;
 
     /*
-    The mandelbrot set will be rendered to this buffer.
-
-    The memory that backs the buffer is bufferMemory. 
+    The mandelbrot set will be rendered to 'bufferGPU' and then copied  from 'bufferGPU' to 'bufferStaging'.
+    The memory that backs the bufferStaging is bufferMemoryStaging.
+    The memory that backs the bufferGPU     is bufferMemoryGPU.
     */
-    VkBuffer       buffer;
-    VkDeviceMemory bufferMemory;
+    VkBuffer       bufferGPU, bufferStaging;
+    VkDeviceMemory bufferMemoryGPU, bufferMemoryStaging;
+
 
     std::vector<const char *> enabledLayers;
 
     /*
     In order to execute commands on a device(GPU), the commands must be submitted
-    to a queue. The commands are stored in a command buffer, and this command buffer
+    to a queue. The commands are stored in a command bufferStaging, and this command bufferStaging
     is given to the queue. 
 
     There will be different kinds of queues on the device. Not all queues support
@@ -126,7 +127,7 @@ public:
       Groups of queues that have the same capabilities(for instance, they all supports graphics and computer operations),
       are grouped into queue families.
 
-      When submitting a command buffer, you must specify to which queue in the family you are submitting to.
+      When submitting a command bufferStaging, you must specify to which queue in the family you are submitting to.
       This variable keeps track of the index of that queue in its family.
       */
       uint32_t queueFamilyIndex = vk_utils::GetComputeQueueFamilyIndex(physicalDevice);
@@ -135,16 +136,19 @@ public:
 
       vkGetDeviceQueue(device, queueFamilyIndex, 0, &queue);
 
-      // Buffer size of the storage buffer that will contain the rendered mandelbrot set.
+      // Buffer size of the storage bufferStaging that will contain the rendered mandelbrot set.
       size_t bufferSize = sizeof(Pixel) * WIDTH * HEIGHT;
 
       std::cout << "creating resources ... " << std::endl;
-      createBuffer(device, physicalDevice, bufferSize,      // very simple example of allocation
-                   &buffer, &bufferMemory);                 // (device, bufferSize) ==> (buffer, bufferMemory)
+      createStagingBuffer(device, physicalDevice, bufferSize,      // very simple example of allocation
+                          &bufferStaging, &bufferMemoryStaging);   // (device, bufferSize) ==> (bufferStaging, bufferMemoryStaging)
 
-      createDescriptorSetLayout(device, &descriptorSetLayout);                          // here we will create a binding of buffer to shader via descriptorSet
-      createDescriptorSetForOurBuffer(device, buffer, bufferSize, &descriptorSetLayout, // (device, buffer, bufferSize, descriptorSetLayout) ==>
-                                      &descriptorPool, &descriptorSet);                 // (descriptorPool, descriptorSet)
+      createWriteOnlyBuffer(device, physicalDevice, bufferSize,    // very simple example of allocation
+                            &bufferGPU, &bufferMemoryGPU);         // (device, bufferSize) ==> (bufferGPU, bufferMemoryGPU)
+
+      createDescriptorSetLayout(device, &descriptorSetLayout);                                 // here we will create a binding of bufferStaging to shader via descriptorSet
+      createDescriptorSetForOurBuffer(device, bufferGPU, bufferSize, &descriptorSetLayout,     // (device, bufferGPU, bufferSize, descriptorSetLayout) ==>  #NOTE: we write now to 'bufferGPU', not 'bufferStaging'
+                                      &descriptorPool, &descriptorSet);                        // (descriptorPool, descriptorSet)
 
       std::cout << "compiling shaders  ... " << std::endl;
       createComputePipeline(device, descriptorSetLayout,
@@ -153,16 +157,17 @@ public:
       createCommandBuffer(device, queueFamilyIndex, pipeline, pipelineLayout,
                           &commandPool, &commandBuffer);
 
-      recordCommandsTo(commandBuffer, pipeline, pipelineLayout, descriptorSet);
+      recordCommandsOfExecuteAndTransfer(commandBuffer, pipeline, pipelineLayout, descriptorSet,
+                                         bufferSize, bufferGPU, bufferStaging);
 
-      // Finally, run the recorded command buffer.
+      // Finally, run the recorded command bufferStaging.
       std::cout << "doing computations ... " << std::endl;
       runCommandBuffer(commandBuffer, queue, device);
 
-      // The former command rendered a mandelbrot set to a buffer.
-      // Save that buffer as a png on disk.
+      // The former command rendered a mandelbrot set to a bufferStaging.
+      // Save that bufferStaging as a png on disk.
       std::cout << "saving image       ... " << std::endl;
-      saveRenderedImageFromDeviceMemory(device, bufferMemory, 0, WIDTH, HEIGHT);
+      saveRenderedImageFromDeviceMemory(device, bufferMemoryStaging, 0, WIDTH, HEIGHT);
 
       // Clean up all vulkan resources.
       std::cout << "destroying all     ... " << std::endl;
@@ -176,11 +181,11 @@ public:
       const int a_bufferSize = a_width * a_height * 4;
 
       void* mappedMemory = nullptr;
-      // Map the buffer memory, so that we can read from it on the CPU.
+      // Map the bufferStaging memory, so that we can read from it on the CPU.
       vkMapMemory(a_device, a_bufferMemory, a_offset, a_bufferSize, 0, &mappedMemory);
       Pixel* pmappedMemory = (Pixel *)mappedMemory;
 
-      // Get the color data from the buffer, and cast it to bytes.
+      // Get the color data from the bufferStaging, and cast it to bytes.
       // We save the data to a vector.
       std::vector<unsigned char> image;
       image.reserve(a_width * a_height * 4);
@@ -213,33 +218,33 @@ public:
     }
 
 
-    static void createBuffer(VkDevice a_device, VkPhysicalDevice a_physDevice, const size_t a_bufferSize,
-                             VkBuffer* a_pBuffer, VkDeviceMemory* a_pBufferMemory)
+    static void createStagingBuffer(VkDevice a_device, VkPhysicalDevice a_physDevice, const size_t a_bufferSize,
+                                    VkBuffer *a_pBuffer, VkDeviceMemory *a_pBufferMemory)
     {
       /*
-      We will now create a buffer. We will render the mandelbrot set into this buffer
+      We will now create a bufferStaging. We will render the mandelbrot set into this bufferStaging
       in a computer shade later.
       */
       VkBufferCreateInfo bufferCreateInfo = {};
       bufferCreateInfo.sType       = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-      bufferCreateInfo.size        = a_bufferSize; // buffer size in bytes.
-      bufferCreateInfo.usage       = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT; // buffer is used as a storage buffer.
-      bufferCreateInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE; // buffer is exclusive to a single queue family at a time.
+      bufferCreateInfo.size        = a_bufferSize; // bufferStaging size in bytes.
+      bufferCreateInfo.usage       = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT; // bufferStaging is used as a storage bufferStaging and we can _copy_to_ it. #NOTE this!
+      bufferCreateInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE; // bufferStaging is exclusive to a single queue family at a time.
 
-      VK_CHECK_RESULT(vkCreateBuffer(a_device, &bufferCreateInfo, NULL, a_pBuffer)); // create buffer.
+      VK_CHECK_RESULT(vkCreateBuffer(a_device, &bufferCreateInfo, NULL, a_pBuffer)); // create bufferStaging.
 
       /*
-      But the buffer doesn't allocate memory for itself, so we must do that manually.
-      First, we find the memory requirements for the buffer.
+      But the bufferStaging doesn't allocate memory for itself, so we must do that manually.
+      First, we find the memory requirements for the bufferStaging.
       */
       VkMemoryRequirements memoryRequirements;
       vkGetBufferMemoryRequirements(a_device, (*a_pBuffer), &memoryRequirements);
         
       /*
-      Now use obtained memory requirements info to allocate the memory for the buffer.
+      Now use obtained memory requirements info to allocate the memory for the bufferStaging.
       There are several types of memory that can be allocated, and we must choose a memory type that
       1) Satisfies the memory requirements(memoryRequirements.memoryTypeBits).
-      2) Satifies our own usage requirements. We want to be able to read the buffer memory from the GPU to the CPU
+      2) Satifies our own usage requirements. We want to be able to read the bufferStaging memory from the GPU to the CPU
          with vkMapMemory, so we set VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT.
 
       Also, by setting VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, memory written by the device(GPU) will be easily
@@ -253,7 +258,41 @@ public:
 
       VK_CHECK_RESULT(vkAllocateMemory(a_device, &allocateInfo, NULL, a_pBufferMemory)); // allocate memory on device.
         
-      // Now associate that allocated memory with the buffer. With that, the buffer is backed by actual memory.
+      // Now associate that allocated memory with the bufferStaging. With that, the bufferStaging is backed by actual memory.
+      VK_CHECK_RESULT(vkBindBufferMemory(a_device, (*a_pBuffer), (*a_pBufferMemory), 0));
+    }
+
+    static void createWriteOnlyBuffer(VkDevice a_device, VkPhysicalDevice a_physDevice, const size_t a_bufferSize,
+                                      VkBuffer *a_pBuffer, VkDeviceMemory *a_pBufferMemory)
+    {
+      /*
+      We will now create a bufferStaging. We will render the mandelbrot set into this bufferStaging
+      in a computer shade later.
+      */
+      VkBufferCreateInfo bufferCreateInfo = {};
+      bufferCreateInfo.sType       = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+      bufferCreateInfo.size        = a_bufferSize;                         // bufferStaging size in bytes.
+      bufferCreateInfo.usage       = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT;   // bufferStaging is used as a storage bufferStaging and we can _copy_from_ it. #NOTE this!
+      bufferCreateInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;            // bufferStaging is exclusive to a single queue family at a time.
+
+      VK_CHECK_RESULT(vkCreateBuffer(a_device, &bufferCreateInfo, NULL, a_pBuffer)); // create bufferStaging.
+
+      /*
+      But the bufferStaging doesn't allocate memory for itself, so we must do that manually.
+      First, we find the memory requirements for the bufferStaging.
+      */
+      VkMemoryRequirements memoryRequirements;
+      vkGetBufferMemoryRequirements(a_device, (*a_pBuffer), &memoryRequirements);
+
+
+      VkMemoryAllocateInfo allocateInfo = {};
+      allocateInfo.sType           = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+      allocateInfo.allocationSize  = memoryRequirements.size; // specify required memory.
+      allocateInfo.memoryTypeIndex = vk_utils::FindMemoryType(memoryRequirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, a_physDevice); // #NOTE VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT
+
+      VK_CHECK_RESULT(vkAllocateMemory(a_device, &allocateInfo, NULL, a_pBufferMemory)); // allocate memory on device.
+
+      // Now associate that allocated memory with the bufferStaging. With that, the bufferStaging is backed by actual memory.
       VK_CHECK_RESULT(vkBindBufferMemory(a_device, (*a_pBuffer), (*a_pBufferMemory), 0));
     }
 
@@ -262,7 +301,7 @@ public:
        /*
        Here we specify a binding of type VK_DESCRIPTOR_TYPE_STORAGE_BUFFER to the binding point 0.
        This binds to
-         layout(std140, binding = 0) buffer buf
+         layout(std140, binding = 0) bufferStaging buf
        in the compute shader.
        */
        VkDescriptorSetLayoutBinding descriptorSetLayoutBinding = {};
@@ -289,7 +328,7 @@ public:
       */
 
       /*
-      Our descriptor pool can only allocate a single storage buffer.
+      Our descriptor pool can only allocate a single storage bufferStaging.
       */
       VkDescriptorPoolSize descriptorPoolSize = {};
       descriptorPoolSize.type            = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
@@ -317,11 +356,11 @@ public:
       VK_CHECK_RESULT(vkAllocateDescriptorSets(a_device, &descriptorSetAllocateInfo, a_pDS));
 
       /*
-      Next, we need to connect our actual storage buffer with the descrptor.
+      Next, we need to connect our actual storage bufferStaging with the descrptor.
       We use vkUpdateDescriptorSets() to update the descriptor set.
       */
 
-      // Specify the buffer to bind to the descriptor.
+      // Specify the bufferStaging to bind to the descriptor.
       VkDescriptorBufferInfo descriptorBufferInfo = {};
       descriptorBufferInfo.buffer = a_buffer;
       descriptorBufferInfo.offset = 0;
@@ -332,7 +371,7 @@ public:
       writeDescriptorSet.dstSet          = (*a_pDS); // write to this descriptor set.
       writeDescriptorSet.dstBinding      = 0;        // write to the first, and only binding.
       writeDescriptorSet.descriptorCount = 1;        // update a single descriptor.
-      writeDescriptorSet.descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER; // storage buffer.
+      writeDescriptorSet.descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER; // storage bufferStaging.
       writeDescriptorSet.pBufferInfo     = &descriptorBufferInfo;
 
       // perform the update of the descriptor set.
@@ -392,8 +431,8 @@ public:
     {
       /*
       We are getting closer to the end. In order to send commands to the device(GPU),
-      we must first record commands into a command buffer.
-      To allocate a command buffer, we must first create a command pool. So let us do that.
+      we must first record commands into a command bufferStaging.
+      To allocate a command bufferStaging, we must first create a command pool. So let us do that.
       */
       VkCommandPoolCreateInfo commandPoolCreateInfo = {};
       commandPoolCreateInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
@@ -404,27 +443,28 @@ public:
       VK_CHECK_RESULT(vkCreateCommandPool(a_device, &commandPoolCreateInfo, NULL, a_pool));
 
       /*
-      Now allocate a command buffer from the command pool.
+      Now allocate a command bufferStaging from the command pool.
       */
       VkCommandBufferAllocateInfo commandBufferAllocateInfo = {};
       commandBufferAllocateInfo.sType       = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
       commandBufferAllocateInfo.commandPool = (*a_pool); // specify the command pool to allocate from.
-      // if the command buffer is primary, it can be directly submitted to queues.
-      // A secondary buffer has to be called from some primary command buffer, and cannot be directly
-      // submitted to a queue. To keep things simple, we use a primary command buffer.
+      // if the command bufferStaging is primary, it can be directly submitted to queues.
+      // A secondary bufferStaging has to be called from some primary command bufferStaging, and cannot be directly
+      // submitted to a queue. To keep things simple, we use a primary command bufferStaging.
       commandBufferAllocateInfo.level              = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-      commandBufferAllocateInfo.commandBufferCount = 1; // allocate a single command buffer.
-      VK_CHECK_RESULT(vkAllocateCommandBuffers(a_device, &commandBufferAllocateInfo, a_pCmdBuff)); // allocate command buffer.
+      commandBufferAllocateInfo.commandBufferCount = 1; // allocate a single command bufferStaging.
+      VK_CHECK_RESULT(vkAllocateCommandBuffers(a_device, &commandBufferAllocateInfo, a_pCmdBuff)); // allocate command bufferStaging.
     }
 
-    static void recordCommandsTo(VkCommandBuffer a_cmdBuff, VkPipeline a_pipeline, VkPipelineLayout a_layout, const VkDescriptorSet& a_ds)
+    static void recordCommandsOfExecuteAndTransfer(VkCommandBuffer a_cmdBuff, VkPipeline a_pipeline, VkPipelineLayout a_layout, const VkDescriptorSet& a_ds,
+                                                   size_t a_bufferSize, VkBuffer a_bufferGPU, VkBuffer a_bufferStaging)
     {
       /*
-      Now we shall start recording commands into the newly allocated command buffer.
+      Now we shall start recording commands into the newly allocated command bufferStaging.
       */
       VkCommandBufferBeginInfo beginInfo = {};
       beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-      beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT; // the buffer is only submitted and used once in this application.
+      beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT; // the bufferStaging is only submitted and used once in this application.
       VK_CHECK_RESULT(vkBeginCommandBuffer(a_cmdBuff, &beginInfo)); // start recording commands.
 
       /*
@@ -441,6 +481,36 @@ public:
       */
       vkCmdDispatch(a_cmdBuff, (uint32_t)ceil(WIDTH / float(WORKGROUP_SIZE)), (uint32_t)ceil(HEIGHT / float(WORKGROUP_SIZE)), 1);
 
+
+      // copy data from bufferGPU to bufferStaging
+      //
+
+      VkBufferMemoryBarrier bufBarr = {};
+      bufBarr.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;
+      bufBarr.pNext = nullptr;
+      bufBarr.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+      bufBarr.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+      bufBarr.size                = VK_WHOLE_SIZE;
+      bufBarr.offset              = 0;
+      bufBarr.buffer              = a_bufferGPU;
+      bufBarr.srcAccessMask       = VK_ACCESS_SHADER_WRITE_BIT;
+      bufBarr.dstAccessMask       = VK_ACCESS_TRANSFER_READ_BIT;
+
+      vkCmdPipelineBarrier(a_cmdBuff,
+                           VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                           VK_PIPELINE_STAGE_TRANSFER_BIT,
+                           0,
+                           0, nullptr,
+                           1, &bufBarr,
+                           0, nullptr);
+
+      VkBufferCopy copyInfo = {};
+      copyInfo.dstOffset = 0;
+      copyInfo.srcOffset = 0;
+      copyInfo.size      = a_bufferSize;
+
+      vkCmdCopyBuffer(a_cmdBuff, a_bufferGPU, a_bufferStaging, 1, &copyInfo);
+
       VK_CHECK_RESULT(vkEndCommandBuffer(a_cmdBuff)); // end recording commands.
     }
 
@@ -448,12 +518,12 @@ public:
     static void runCommandBuffer(VkCommandBuffer a_cmdBuff, VkQueue a_queue, VkDevice a_device)
     {
       /*
-      Now we shall finally submit the recorded command buffer to a queue.
+      Now we shall finally submit the recorded command bufferStaging to a queue.
       */
       VkSubmitInfo submitInfo = {};
       submitInfo.sType              = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-      submitInfo.commandBufferCount = 1; // submit a single command buffer
-      submitInfo.pCommandBuffers    = &a_cmdBuff; // the command buffer to submit.
+      submitInfo.commandBufferCount = 1; // submit a single command bufferStaging
+      submitInfo.pCommandBuffers    = &a_cmdBuff; // the command bufferStaging to submit.
 
       /*
         We create a fence.
@@ -465,14 +535,14 @@ public:
       VK_CHECK_RESULT(vkCreateFence(a_device, &fenceCreateInfo, NULL, &fence));
 
       /*
-      We submit the command buffer on the queue, at the same time giving a fence.
+      We submit the command bufferStaging on the queue, at the same time giving a fence.
       */
       VK_CHECK_RESULT(vkQueueSubmit(a_queue, 1, &submitInfo, fence));
 
       /*
       The command will not have finished executing until the fence is signalled.
       So we wait here.
-      We will directly after this read our buffer from the GPU,
+      We will directly after this read our bufferStaging from the GPU,
       and we will not be sure that the command has finished executing unless we wait for the fence.
       Hence, we use a fence here.
       */
@@ -495,8 +565,12 @@ public:
             func(instance, debugReportCallback, NULL);
         }
 
-        vkFreeMemory(device, bufferMemory, NULL);
-        vkDestroyBuffer(device, buffer, NULL);	
+        vkFreeMemory(device, bufferMemoryStaging, NULL);
+        vkDestroyBuffer(device, bufferStaging, NULL);
+
+        vkFreeMemory(device, bufferMemoryGPU, NULL);
+        vkDestroyBuffer(device, bufferGPU, NULL);
+
         vkDestroyShaderModule(device, computeShaderModule, NULL);
         vkDestroyDescriptorPool(device, descriptorPool, NULL);
         vkDestroyDescriptorSetLayout(device, descriptorSetLayout, NULL);
