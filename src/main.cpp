@@ -456,6 +456,7 @@ public:
       VK_CHECK_RESULT(vkAllocateCommandBuffers(a_device, &commandBufferAllocateInfo, a_pCmdBuff)); // allocate command bufferStaging.
     }
 
+
     static void recordCommandsOfExecuteAndTransfer(VkCommandBuffer a_cmdBuff, VkPipeline a_pipeline, VkPipelineLayout a_layout, const VkDescriptorSet& a_ds,
                                                    size_t a_bufferSize, VkBuffer a_bufferGPU, VkBuffer a_bufferStaging)
     {
@@ -466,6 +467,8 @@ public:
       beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
       beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT; // the bufferStaging is only submitted and used once in this application.
       VK_CHECK_RESULT(vkBeginCommandBuffer(a_cmdBuff, &beginInfo)); // start recording commands.
+
+      vkCmdFillBuffer(a_cmdBuff, a_bufferStaging, 0, a_bufferSize, 0); // clear this buffer just for an example and test cases. if we comment 'vkCmdCopyBuffer', we'll get black image
 
       /*
       We need to bind a pipeline, AND a descriptor set before we dispatch
@@ -482,7 +485,7 @@ public:
       vkCmdDispatch(a_cmdBuff, (uint32_t)ceil(WIDTH / float(WORKGROUP_SIZE)), (uint32_t)ceil(HEIGHT / float(WORKGROUP_SIZE)), 1);
 
 
-      // copy data from bufferGPU to bufferStaging
+      // copy data from bufferGPU to bufferStaging. #NOTE: this is new!!!
       //
 
       VkBufferMemoryBarrier bufBarr = {};
