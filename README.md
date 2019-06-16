@@ -15,8 +15,12 @@ Please note that **they do have Ubuntu packages!**
 # Demo
 
 The application launches a compute shader that renders the mandelbrot set, by rendering it into a storage bufferStaging.
-The storage bufferStaging is then read from the GPU, and saved as `.png`. Check the source code comments
+The storage bufferStaging is then read from the GPU, and saved as `.bmp`. Check the source code comments
 for further info.
+
+Please note **main difference to step1**:
+1) we create 2 buffers (bufferGPU and bufferStaging)
+2) recordCommandsOfExecuteAndTransfer will write to bufferGPU and then transfer data to bufferStaging
 
 ## Building
 
