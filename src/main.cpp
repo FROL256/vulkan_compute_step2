@@ -92,6 +92,12 @@ private:
     VkDeviceMemory bufferMemoryGPU, bufferMemoryStaging;
 
 
+    // we change this sample to work with textures
+    //
+    VkDeviceMemory imagesMemoryGPU;
+    VkImage        imageGPU[2];
+
+
     std::vector<const char *> enabledLayers;
 
     /*
@@ -145,6 +151,9 @@ public:
 
       createWriteOnlyBuffer(device, physicalDevice, bufferSize,    // very simple example of allocation
                             &bufferGPU, &bufferMemoryGPU);         // (device, bufferSize) ==> (bufferGPU, bufferMemoryGPU)
+
+      createTwoRWTextures(device, physicalDevice, WIDTH, HEIGHT,
+                          imageGPU, &imagesMemoryGPU);
 
       createDescriptorSetLayout(device, &descriptorSetLayout);                                 // here we will create a binding of bufferStaging to shader via descriptorSet
       createDescriptorSetForOurBuffer(device, bufferGPU, bufferSize, &descriptorSetLayout,     // (device, bufferGPU, bufferSize, descriptorSetLayout) ==>  #NOTE: we write now to 'bufferGPU', not 'bufferStaging'
@@ -294,6 +303,46 @@ public:
 
       // Now associate that allocated memory with the bufferStaging. With that, the bufferStaging is backed by actual memory.
       VK_CHECK_RESULT(vkBindBufferMemory(a_device, (*a_pBuffer), (*a_pBufferMemory), 0));
+    }
+
+    static void createTwoRWTextures(VkDevice a_device, VkPhysicalDevice a_physDevice, const int a_width, const int a_height,
+                                    VkImage a_images[2], VkDeviceMemory *a_pImagesMemory)
+    {
+      // first create desired objects, but still don't allocate memory for them
+      //
+      VkImageCreateInfo imgCreateInfo = {};
+      imgCreateInfo.sType         = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+      imgCreateInfo.pNext         = nullptr;
+      imgCreateInfo.flags         = 0; // not sure about this ...
+      imgCreateInfo.imageType     = VK_IMAGE_TYPE_2D;
+      imgCreateInfo.format        = VK_FORMAT_R32G32B32A32_SFLOAT; // we create float4 texture just to keep things simple, this is and example at least ...
+      imgCreateInfo.extent        = VkExtent3D{a_width, a_height, 1};
+      imgCreateInfo.mipLevels     = 1;
+      imgCreateInfo.samples       = VK_SAMPLE_COUNT_1_BIT;
+      imgCreateInfo.tiling        = VK_IMAGE_TILING_OPTIMAL;
+      imgCreateInfo.usage         = VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT; // RW and copy in both ways
+      imgCreateInfo.sharingMode   = VK_SHARING_MODE_EXCLUSIVE;
+      imgCreateInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+      imgCreateInfo.arrayLayers   = 1;
+
+      VK_CHECK_RESULT(vkCreateImage(a_device, &imgCreateInfo, nullptr, a_images + 0));
+      VK_CHECK_RESULT(vkCreateImage(a_device, &imgCreateInfo, nullptr, a_images + 1));
+
+      // now allocate memory for both images
+      //
+      VkMemoryRequirements memoryRequirements[2];
+      vkGetImageMemoryRequirements(a_device, a_images[0], memoryRequirements + 0);
+      vkGetImageMemoryRequirements(a_device, a_images[1], memoryRequirements + 1);
+
+      VkMemoryAllocateInfo allocateInfo = {};
+      allocateInfo.sType           = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+      allocateInfo.allocationSize  = memoryRequirements[0].size + memoryRequirements[1].size; // specify required memory.
+      allocateInfo.memoryTypeIndex = vk_utils::FindMemoryType(memoryRequirements[0].memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, a_physDevice);
+
+      VK_CHECK_RESULT(vkAllocateMemory(a_device, &allocateInfo, NULL, a_pImagesMemory)); // allocate memory on device.
+
+      VK_CHECK_RESULT(vkBindImageMemory(a_device, a_images[0], (*a_pImagesMemory), 0));
+      VK_CHECK_RESULT(vkBindImageMemory(a_device, a_images[1], (*a_pImagesMemory), memoryRequirements[0].size));
     }
 
     static void createDescriptorSetLayout(VkDevice a_device, VkDescriptorSetLayout* a_pDSLayout)
@@ -580,11 +629,15 @@ public:
             func(instance, debugReportCallback, NULL);
         }
 
-        vkFreeMemory(device, bufferMemoryStaging, NULL);
+        vkFreeMemory   (device, bufferMemoryStaging, NULL);
         vkDestroyBuffer(device, bufferStaging, NULL);
 
-        vkFreeMemory(device, bufferMemoryGPU, NULL);
+        vkFreeMemory   (device, bufferMemoryGPU, NULL);
         vkDestroyBuffer(device, bufferGPU, NULL);
+
+        vkFreeMemory  (device, imagesMemoryGPU, NULL);
+        vkDestroyImage(device, imageGPU[0], NULL);
+        vkDestroyImage(device, imageGPU[1], NULL);
 
         vkDestroyShaderModule(device, computeShaderModule, NULL);
         vkDestroyDescriptorPool(device, descriptorPool, NULL);

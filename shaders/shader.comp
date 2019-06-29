@@ -14,7 +14,7 @@ layout(push_constant) uniform params_t
   int width;
   int height;
 
-}params;
+} params;
 
 layout(std140, binding = 0) buffer buf
 {
