@@ -183,8 +183,38 @@ public:
       std::cout << "testing save/load  ... " << std::endl;
       int w,h;
       auto imageData = LoadBMP("texture1.bmp", &w, &h);
+
       if(imageData.size() != 0)
+      {
+        vkResetCommandBuffer(commandBuffer, 0);
+
+        recordCommandsOfImageProcessing(commandBuffer, pipeline, w, h,
+                                        imageGPU, bufferStaging);
+
+        std::cout << "doing filter computations ... " << std::endl;
+        runCommandBuffer(commandBuffer, queue, device);
+
+        // copy result to mageData.data()
+        {
+          void *mappedMemory = nullptr;
+          vkMapMemory(device, bufferMemoryStaging, 0, w * h * sizeof(float) * 4, 0, &mappedMemory);
+
+          Pixel* pmappedMemory = (Pixel *)mappedMemory;
+
+          for (int i = 0; i < (w * h); i += 1)
+          {
+            const uint32_t r = ((uint32_t)(255.0f * (pmappedMemory[i].r)));
+            const uint32_t g = ((uint32_t)(255.0f * (pmappedMemory[i].g)));
+            const uint32_t b = ((uint32_t)(255.0f * (pmappedMemory[i].b)));
+            imageData[i] = (r << 16) | (g << 8)  | (b << 0);
+          }
+
+          // Done reading, so unmap.
+          vkUnmapMemory(device, bufferMemoryStaging);
+        }
+
         SaveBMP("texture1_out.bmp", imageData.data(), w, h);
+      }
 
       // Clean up all vulkan resources.
       std::cout << "destroying all     ... " << std::endl;
@@ -502,7 +532,8 @@ public:
       */
       VkCommandPoolCreateInfo commandPoolCreateInfo = {};
       commandPoolCreateInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
-      commandPoolCreateInfo.flags = 0;
+      commandPoolCreateInfo.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
+
       // the queue family of this command pool. All command buffers allocated from this command pool,
       // must be submitted to queues of this family ONLY.
       commandPoolCreateInfo.queueFamilyIndex = queueFamilyIndex;
@@ -586,6 +617,104 @@ public:
       VK_CHECK_RESULT(vkEndCommandBuffer(a_cmdBuff)); // end recording commands.
     }
 
+    ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+    ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+    static VkImageMemoryBarrier imBarTransfer(VkImage a_image, const VkImageSubresourceRange& a_range, VkImageLayout before, VkImageLayout after) // VkImageLayout
+    {
+      VkImageMemoryBarrier moveToGeneralBar = {};
+      moveToGeneralBar.sType               = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+      moveToGeneralBar.pNext               = nullptr;
+      moveToGeneralBar.srcAccessMask       = 0;
+      moveToGeneralBar.dstAccessMask       = VK_PIPELINE_STAGE_TRANSFER_BIT;
+      moveToGeneralBar.oldLayout           = before;
+      moveToGeneralBar.newLayout           = after;
+      moveToGeneralBar.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+      moveToGeneralBar.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+      moveToGeneralBar.image               = a_image;
+      moveToGeneralBar.subresourceRange    = a_range;
+      return moveToGeneralBar;
+    }
+
+    static void recordCommandsOfImageProcessing(VkCommandBuffer a_cmdBuff, VkPipeline a_pipeline, int a_width, int a_height,
+                                                VkImage a_images[2], VkBuffer a_bufferStaging)
+    {
+      //// Now we shall start recording commands into the newly allocated command bufferStaging.
+      //
+      VkCommandBufferBeginInfo beginInfo = {};
+      beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+      beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT; // the bufferStaging is only submitted and used once in this application.
+      VK_CHECK_RESULT(vkBeginCommandBuffer(a_cmdBuff, &beginInfo)); // start recording commands.
+
+      vkCmdFillBuffer(a_cmdBuff, a_bufferStaging, 0, a_width*a_height*sizeof(float)*4, 0); // clear this buffer just for an example and test cases. if we comment 'vkCmdCopyBuffer', we'll get black image
+
+      // we want to work with the whole mage
+      //
+      VkImageSubresourceRange rangeWholeImage = {};
+      rangeWholeImage.aspectMask     = VK_IMAGE_ASPECT_COLOR_BIT;
+      rangeWholeImage.baseMipLevel   = 0;
+      rangeWholeImage.levelCount     = 1;
+      rangeWholeImage.baseArrayLayer = 0;
+      rangeWholeImage.layerCount     = 1;
+
+      // at first we must move our images to 'VK_IMAGE_LAYOUT_GENERAL' layout to further clear them
+      //
+      VkImageMemoryBarrier moveToGeneralBar[2];
+      moveToGeneralBar[0] = imBarTransfer(a_images[0], rangeWholeImage, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+      moveToGeneralBar[1] = imBarTransfer(a_images[1], rangeWholeImage, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+
+      vkCmdPipelineBarrier(a_cmdBuff,
+                           VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                           VK_PIPELINE_STAGE_TRANSFER_BIT,
+                           0,
+                           0, nullptr,           // general memory barriers
+                           0, nullptr,           // buffer barriers
+                           2, moveToGeneralBar); // image  barriers
+
+      // now we can clear images
+      //
+      VkClearColorValue clearVal = {};
+      clearVal.float32[0] = 1.0f;
+      clearVal.float32[1] = 1.0f;
+      clearVal.float32[2] = 1.0f;
+      clearVal.float32[3] = 1.0f;
+
+      vkCmdClearColorImage(a_cmdBuff, a_images[0], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &clearVal, 1, &rangeWholeImage); // clear image with (1,1,1,1)
+      vkCmdClearColorImage(a_cmdBuff, a_images[1], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &clearVal, 1, &rangeWholeImage); // clear image with (1,1,1,1)
+
+      VkImageMemoryBarrier barForCopy[2];
+      barForCopy[0] = imBarTransfer(a_images[0], rangeWholeImage, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+      barForCopy[1] = imBarTransfer(a_images[1], rangeWholeImage, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+
+      vkCmdPipelineBarrier(a_cmdBuff,
+                           VK_PIPELINE_STAGE_TRANSFER_BIT,
+                           VK_PIPELINE_STAGE_TRANSFER_BIT,
+                           0,
+                           0, nullptr,     // general memory barriers
+                           0, nullptr,     // buffer barriers
+                           2, barForCopy); // image  barriers
+
+      VkImageSubresourceLayers shittylayers = {};
+      shittylayers.aspectMask     = VK_IMAGE_ASPECT_COLOR_BIT;
+      shittylayers.mipLevel       = 0;
+      shittylayers.baseArrayLayer = 0;
+      shittylayers.layerCount     = 1;
+
+      VkBufferImageCopy wholeRegion = {};
+      wholeRegion.bufferOffset      = 0;
+      wholeRegion.bufferRowLength   = uint32_t(a_width);
+      wholeRegion.bufferImageHeight = uint32_t(a_height);
+      wholeRegion.imageExtent       = VkExtent3D{uint32_t(a_width), uint32_t(a_height), 1};
+      wholeRegion.imageOffset       = VkOffset3D{0,0,0};
+      wholeRegion.imageSubresource  = shittylayers;
+
+      vkCmdCopyImageToBuffer(a_cmdBuff, a_images[1], VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, a_bufferStaging, 1, &wholeRegion);
+
+      VK_CHECK_RESULT(vkEndCommandBuffer(a_cmdBuff)); // end recording commands.
+    }
+
+    ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+    ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
     static void runCommandBuffer(VkCommandBuffer a_cmdBuff, VkQueue a_queue, VkDevice a_device)
     {

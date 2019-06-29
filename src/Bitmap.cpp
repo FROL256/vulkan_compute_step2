@@ -49,7 +49,6 @@ void SaveBMP(const char* fname, const unsigned int* pixels, int w, int h)
   WriteBMP(fname, &pixels2[0], w, h);
 }
 
-
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -67,7 +66,6 @@ std::vector<unsigned int> LoadBMP(const char* filename, int* pW, int* pH)
   unsigned char info[54];
   fread(info, sizeof(unsigned char), 54, f); // read the 54-byte header
 
-  // extract image height and width from header
   int width  = *(int*)&info[18];
   int height = *(int*)&info[22];
 
@@ -80,9 +78,7 @@ std::vector<unsigned int> LoadBMP(const char* filename, int* pW, int* pH)
   {
     fread(data, sizeof(unsigned char), row_padded, f);
     for(int j = 0; j < width; j++)
-      res[i*width+j] = (uint32_t(data[j*3+0]) << 16) |
-                       (uint32_t(data[j*3+1]) << 8)  |
-                       (uint32_t(data[j*3+2]) << 0);
+      res[i*width+j] = (uint32_t(data[j*3+0]) << 16) | (uint32_t(data[j*3+1]) << 8)  | (uint32_t(data[j*3+2]) << 0);
   }
 
   fclose(f);
