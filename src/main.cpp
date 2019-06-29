@@ -13,7 +13,7 @@
 
 const int WIDTH          = 3200;  // Size of rendered mandelbrot set.
 const int HEIGHT         = 2400;  // Size of renderered mandelbrot set.
-const int WORKGROUP_SIZE = 32;    // Workgroup size in compute shader.
+const int WORKGROUP_SIZE = 16;    // Workgroup size in compute shader.
 
 #ifdef NDEBUG
 constexpr bool enableValidationLayers = false;
@@ -406,14 +406,23 @@ public:
       shaderStageCreateInfo.module = (*a_pShaderModule);
       shaderStageCreateInfo.pName  = "main";
 
+      //// Allow pass (w,h) inside shader directly from command buffer
+      //
+      VkPushConstantRange pcRange = {};    // #NOTE: we updated this to pass W/H inside shader
+      pcRange.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+      pcRange.offset     = 0;
+      pcRange.size       = 2*sizeof(int);  // #NOTE: (w,h); pleas add more memory if you need more parameters!
+
       /*
       The pipeline layout allows the pipeline to access descriptor sets.
       So we just specify the descriptor set layout we created earlier.
       */
       VkPipelineLayoutCreateInfo pipelineLayoutCreateInfo = {};
-      pipelineLayoutCreateInfo.sType          = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-      pipelineLayoutCreateInfo.setLayoutCount = 1;
-      pipelineLayoutCreateInfo.pSetLayouts    = &a_dsLayout;
+      pipelineLayoutCreateInfo.sType                  = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+      pipelineLayoutCreateInfo.setLayoutCount         = 1;
+      pipelineLayoutCreateInfo.pSetLayouts            = &a_dsLayout;
+      pipelineLayoutCreateInfo.pushConstantRangeCount = 1;
+      pipelineLayoutCreateInfo.pPushConstantRanges    = &pcRange;
       VK_CHECK_RESULT(vkCreatePipelineLayout(a_device, &pipelineLayoutCreateInfo, NULL, a_pPipelineLayout));
 
       VkComputePipelineCreateInfo pipelineCreateInfo = {};
@@ -474,8 +483,11 @@ public:
       We need to bind a pipeline, AND a descriptor set before we dispatch
       The validation layer will NOT give warnings if you forget these, so be very careful not to forget them.
       */
-      vkCmdBindPipeline(a_cmdBuff, VK_PIPELINE_BIND_POINT_COMPUTE, a_pipeline);
+      vkCmdBindPipeline      (a_cmdBuff, VK_PIPELINE_BIND_POINT_COMPUTE, a_pipeline);
       vkCmdBindDescriptorSets(a_cmdBuff, VK_PIPELINE_BIND_POINT_COMPUTE, a_layout, 0, 1, &a_ds, 0, NULL);
+
+      int wh[2] = {WIDTH,HEIGHT};
+      vkCmdPushConstants     (a_cmdBuff, a_layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(int)*2, wh);
 
       /*
       Calling vkCmdDispatch basically starts the compute pipeline, and executes the compute shader.
