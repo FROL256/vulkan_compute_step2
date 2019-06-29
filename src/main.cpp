@@ -324,7 +324,7 @@ public:
       imgCreateInfo.flags         = 0; // not sure about this ...
       imgCreateInfo.imageType     = VK_IMAGE_TYPE_2D;
       imgCreateInfo.format        = VK_FORMAT_R32G32B32A32_SFLOAT; // we create float4 texture just to keep things simple, this is and example at least ...
-      imgCreateInfo.extent        = VkExtent3D{a_width, a_height, 1};
+      imgCreateInfo.extent        = VkExtent3D{uint32_t(a_width), uint32_t(a_height), 1};
       imgCreateInfo.mipLevels     = 1;
       imgCreateInfo.samples       = VK_SAMPLE_COUNT_1_BIT;
       imgCreateInfo.tiling        = VK_IMAGE_TILING_OPTIMAL;
