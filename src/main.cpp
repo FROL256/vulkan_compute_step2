@@ -178,6 +178,14 @@ public:
       std::cout << "saving image       ... " << std::endl;
       saveRenderedImageFromDeviceMemory(device, bufferMemoryStaging, 0, WIDTH, HEIGHT);
 
+      // test image filter pipeline here ... temp solution
+      //
+      std::cout << "testing save/load  ... " << std::endl;
+      int w,h;
+      auto imageData = LoadBMP("texture1.bmp", &w, &h);
+      if(imageData.size() != 0)
+        SaveBMP("texture1_out.bmp", imageData.data(), w, h);
+
       // Clean up all vulkan resources.
       std::cout << "destroying all     ... " << std::endl;
       cleanup();

@@ -48,3 +48,47 @@ void SaveBMP(const char* fname, const unsigned int* pixels, int w, int h)
 
   WriteBMP(fname, &pixels2[0], w, h);
 }
+
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+std::vector<unsigned int> LoadBMP(const char* filename, int* pW, int* pH)
+{
+  FILE* f = fopen(filename, "rb");
+
+  if(f == NULL)
+  {
+    (*pW) = 0;
+    (*pH) = 0;
+    return std::vector<unsigned int>();
+  }
+
+  unsigned char info[54];
+  fread(info, sizeof(unsigned char), 54, f); // read the 54-byte header
+
+  // extract image height and width from header
+  int width  = *(int*)&info[18];
+  int height = *(int*)&info[22];
+
+  int row_padded      = (width*3 + 3) & (~3);
+  unsigned char* data = new unsigned char[row_padded];
+
+  std::vector<unsigned int> res(width*height);
+
+  for(int i = 0; i < height; i++)
+  {
+    fread(data, sizeof(unsigned char), row_padded, f);
+    for(int j = 0; j < width; j++)
+      res[i*width+j] = (uint32_t(data[j*3+0]) << 16) |
+                       (uint32_t(data[j*3+1]) << 8)  |
+                       (uint32_t(data[j*3+2]) << 0);
+  }
+
+  fclose(f);
+  delete [] data;
+
+  (*pW) = width;
+  (*pH) = height;
+  return res;
+}
