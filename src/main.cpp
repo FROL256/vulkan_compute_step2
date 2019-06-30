@@ -175,8 +175,18 @@ public:
 
       // The former command rendered a mandelbrot set to a bufferStaging.
       // Save that bufferStaging as a png on disk.
+      std::cout << "geting image back  ... " << std::endl;
+      //saveRenderedImageFromDeviceMemory(device, bufferMemoryStaging, 0, WIDTH, HEIGHT);
+
+      std::vector<uint32_t> resultData(WIDTH*HEIGHT);
+
+      getImageFromGPU(device, bufferMemoryStaging, WIDTH, HEIGHT,
+                      resultData.data());
+
       std::cout << "saving image       ... " << std::endl;
-      saveRenderedImageFromDeviceMemory(device, bufferMemoryStaging, 0, WIDTH, HEIGHT);
+      SaveBMP("mandelbrot.bmp", resultData.data(), WIDTH, HEIGHT);
+
+      std::cout << std::endl;
 
       // test image filter pipeline here ... temp solution
       //
@@ -194,25 +204,11 @@ public:
         std::cout << "doing filter computations ... " << std::endl;
         runCommandBuffer(commandBuffer, queue, device);
 
-        // copy result to mageData.data()
-        {
-          void *mappedMemory = nullptr;
-          vkMapMemory(device, bufferMemoryStaging, 0, w * h * sizeof(float) * 4, 0, &mappedMemory);
+        std::cout << "geting image back  ... " << std::endl;
+        getImageFromGPU(device, bufferMemoryStaging, w, h,
+                        imageData.data());
 
-          Pixel* pmappedMemory = (Pixel *)mappedMemory;
-
-          for (int i = 0; i < (w * h); i += 1)
-          {
-            const uint32_t r = ((uint32_t)(255.0f * (pmappedMemory[i].r)));
-            const uint32_t g = ((uint32_t)(255.0f * (pmappedMemory[i].g)));
-            const uint32_t b = ((uint32_t)(255.0f * (pmappedMemory[i].b)));
-            imageData[i] = (r << 16) | (g << 8)  | (b << 0);
-          }
-
-          // Done reading, so unmap.
-          vkUnmapMemory(device, bufferMemoryStaging);
-        }
-
+        std::cout << "saving image       ... " << std::endl;
         SaveBMP("texture1_out.bmp", imageData.data(), w, h);
       }
 
@@ -221,33 +217,21 @@ public:
       cleanup();
     }
 
-    // assume simple pitch-linear data layout and 'a_bufferMemory' to be a mapped memory.
-    //
-    static void saveRenderedImageFromDeviceMemory(VkDevice a_device, VkDeviceMemory a_bufferMemory, size_t a_offset, int a_width, int a_height)
+    static void getImageFromGPU(VkDevice a_device, VkDeviceMemory a_stagingMem, int w, int h,
+                                uint32_t *imageData)
     {
-      const int a_bufferSize = a_width * a_height * 4;
-
-      void* mappedMemory = nullptr;
-      // Map the bufferStaging memory, so that we can read from it on the CPU.
-      vkMapMemory(a_device, a_bufferMemory, a_offset, a_bufferSize, 0, &mappedMemory);
+      void *mappedMemory = nullptr;
+      vkMapMemory(a_device, a_stagingMem, 0, w * h * sizeof(float) * 4, 0, &mappedMemory);
       Pixel* pmappedMemory = (Pixel *)mappedMemory;
-
-      // Get the color data from the bufferStaging, and cast it to bytes.
-      // We save the data to a vector.
-      std::vector<unsigned char> image;
-      image.reserve(a_width * a_height * 4);
-      for (int i = 0; i < (a_width * a_height); i += 1)
+      for (int i = 0; i < (w * h); i += 1)
       {
-        image.push_back((unsigned char)(255.0f * (pmappedMemory[i].r)));
-        image.push_back((unsigned char)(255.0f * (pmappedMemory[i].g)));
-        image.push_back((unsigned char)(255.0f * (pmappedMemory[i].b)));
-        image.push_back((unsigned char)(255.0f * (pmappedMemory[i].a)));
+        const uint32_t r = ((uint32_t) (255.0f * (pmappedMemory[i].r)));
+        const uint32_t g = ((uint32_t) (255.0f * (pmappedMemory[i].g)));
+        const uint32_t b = ((uint32_t) (255.0f * (pmappedMemory[i].b)));
+        imageData[i] = (r << 0) | (g << 8) | (b << 16);
       }
-
       // Done reading, so unmap.
-      vkUnmapMemory(a_device, a_bufferMemory);
-
-      SaveBMP("mandelbrot.bmp", (const uint32_t*)image.data(), WIDTH, HEIGHT);
+      vkUnmapMemory(a_device, a_stagingMem);
     }
 
     static VKAPI_ATTR VkBool32 VKAPI_CALL debugReportCallbackFn(
