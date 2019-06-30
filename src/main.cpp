@@ -200,7 +200,7 @@ public:
         createDynamicBuffer(device, physicalDevice, w*h*sizeof(float)*4,
                             &bufferDynamic, &bufferMemoryDynamic);
 
-        putImageToGPU(device, bufferMemoryDynamic, w, h, imageData.data());
+        putImageToGPU(device, bufferMemoryDynamic, w, h, imageData.data()); // bufferMemoryDynamic <== imageData.data()
 
         vkResetCommandBuffer(commandBuffer, 0);
 
@@ -211,7 +211,7 @@ public:
         runCommandBuffer(commandBuffer, queue, device);
 
         std::cout << "geting image back  ... " << std::endl;
-        getImageFromGPU(device, bufferMemoryStaging, w, h,
+        getImageFromGPU(device, bufferMemoryStaging, w, h,                 // bufferMemoryStaging ==> imageData.data()
                         imageData.data());
 
         std::cout << "saving image       ... " << std::endl;
@@ -247,9 +247,9 @@ public:
       float* pmappedMemory = (float*)mappedMemory;
       for (int i = 0; i < (w * h); i ++)
       {
-        const uint32_t r = (a_imageData[i] & 0x00FF0000) >> 16;
+        const uint32_t b = (a_imageData[i] & 0x00FF0000) >> 16;
         const uint32_t g = (a_imageData[i] & 0x0000FF00) >> 8;
-        const uint32_t b = (a_imageData[i] & 0x000000FF);
+        const uint32_t r = (a_imageData[i] & 0x000000FF);
 
         pmappedMemory[i*4+0] = float(r)*(1.0f/255.0f);
         pmappedMemory[i*4+1] = float(g)*(1.0f/255.0f);
