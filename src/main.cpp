@@ -2,8 +2,8 @@
 #include <vulkan/vulkan.h>
 
 #include <vector>
-#include <string.h>
-#include <assert.h>
+#include <cstring>
+#include <cassert>
 #include <stdexcept>
 #include <cmath>
 
@@ -88,8 +88,8 @@ private:
     The memory that backs the bufferStaging is bufferMemoryStaging.
     The memory that backs the bufferGPU     is bufferMemoryGPU.
     */
-    VkBuffer       bufferGPU, bufferStaging;
-    VkDeviceMemory bufferMemoryGPU, bufferMemoryStaging;
+    VkBuffer       bufferGPU, bufferStaging, bufferDynamic;
+    VkDeviceMemory bufferMemoryGPU, bufferMemoryStaging, bufferMemoryDynamic;
 
 
     // we change this sample to work with textures
@@ -112,6 +112,7 @@ private:
     VkQueue queue; // a queue supporting compute operations.
 
 public:
+    ComputeApplication() : bufferDynamic(NULL), bufferMemoryDynamic(NULL) { }
 
     void run()
     {
@@ -185,20 +186,25 @@ public:
 
       std::cout << "saving image       ... " << std::endl;
       SaveBMP("mandelbrot.bmp", resultData.data(), WIDTH, HEIGHT);
+      resultData = std::vector<uint32_t>();
 
       std::cout << std::endl;
 
       // test image filter pipeline here ... temp solution
       //
-      std::cout << "testing save/load  ... " << std::endl;
       int w,h;
       auto imageData = LoadBMP("texture1.bmp", &w, &h);
 
       if(imageData.size() != 0)
       {
+        createDynamicBuffer(device, physicalDevice, w*h*sizeof(float)*4,
+                            &bufferDynamic, &bufferMemoryDynamic);
+
+        putImageToGPU(device, bufferMemoryDynamic, w, h, imageData.data());
+
         vkResetCommandBuffer(commandBuffer, 0);
 
-        recordCommandsOfImageProcessing(commandBuffer, pipeline, w, h,
+        recordCommandsOfImageProcessing(commandBuffer, pipeline, w, h, bufferDynamic,
                                         imageGPU, bufferStaging);
 
         std::cout << "doing filter computations ... " << std::endl;
@@ -233,6 +239,27 @@ public:
       // Done reading, so unmap.
       vkUnmapMemory(a_device, a_stagingMem);
     }
+
+    static void putImageToGPU(VkDevice a_device, VkDeviceMemory a_dynamicMem, int w, int h, const uint32_t *a_imageData)
+    {
+      void *mappedMemory = nullptr;
+      vkMapMemory(a_device, a_dynamicMem, 0, w * h * sizeof(float) * 4, 0, &mappedMemory);
+      float* pmappedMemory = (float*)mappedMemory;
+      for (int i = 0; i < (w * h); i ++)
+      {
+        const uint32_t r = (a_imageData[i] & 0x00FF0000) >> 16;
+        const uint32_t g = (a_imageData[i] & 0x0000FF00) >> 8;
+        const uint32_t b = (a_imageData[i] & 0x000000FF);
+
+        pmappedMemory[i*4+0] = float(r)*(1.0f/255.0f);
+        pmappedMemory[i*4+1] = float(g)*(1.0f/255.0f);
+        pmappedMemory[i*4+2] = float(b)*(1.0f/255.0f);
+        pmappedMemory[i*4+3] = 0.0f;
+      }
+      // Done reading, so unmap.
+      vkUnmapMemory(a_device, a_dynamicMem);
+    }
+
 
     static VKAPI_ATTR VkBool32 VKAPI_CALL debugReportCallbackFn(
         VkDebugReportFlagsEXT                       flags,
@@ -292,6 +319,32 @@ public:
       // Now associate that allocated memory with the bufferStaging. With that, the bufferStaging is backed by actual memory.
       VK_CHECK_RESULT(vkBindBufferMemory(a_device, (*a_pBuffer), (*a_pBufferMemory), 0));
     }
+
+
+    static void createDynamicBuffer(VkDevice a_device, VkPhysicalDevice a_physDevice, const size_t a_bufferSize,
+                                    VkBuffer *a_pBuffer, VkDeviceMemory *a_pBufferMemory)
+    {
+      VkBufferCreateInfo bufferCreateInfo = {};
+      bufferCreateInfo.sType       = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+      bufferCreateInfo.size        = a_bufferSize;
+      bufferCreateInfo.usage       = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+      bufferCreateInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+
+      VK_CHECK_RESULT(vkCreateBuffer(a_device, &bufferCreateInfo, NULL, a_pBuffer)); // create bufferStaging.
+
+      VkMemoryRequirements memoryRequirements;
+      vkGetBufferMemoryRequirements(a_device, (*a_pBuffer), &memoryRequirements);
+
+      VkMemoryAllocateInfo allocateInfo = {};
+      allocateInfo.sType           = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+      allocateInfo.allocationSize  = memoryRequirements.size; // specify required memory.
+      allocateInfo.memoryTypeIndex = vk_utils::FindMemoryType(memoryRequirements.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_COHERENT_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT, a_physDevice);
+
+      VK_CHECK_RESULT(vkAllocateMemory(a_device, &allocateInfo, NULL, a_pBufferMemory)); // allocate memory on device.
+
+      VK_CHECK_RESULT(vkBindBufferMemory(a_device, (*a_pBuffer), (*a_pBufferMemory), 0));
+    }
+
 
     static void createWriteOnlyBuffer(VkDevice a_device, VkPhysicalDevice a_physDevice, const size_t a_bufferSize,
                                       VkBuffer *a_pBuffer, VkDeviceMemory *a_pBufferMemory)
@@ -620,7 +673,7 @@ public:
       return moveToGeneralBar;
     }
 
-    static void recordCommandsOfImageProcessing(VkCommandBuffer a_cmdBuff, VkPipeline a_pipeline, int a_width, int a_height,
+    static void recordCommandsOfImageProcessing(VkCommandBuffer a_cmdBuff, VkPipeline a_pipeline, int a_width, int a_height, VkBuffer a_bufferDynamic,
                                                 VkImage a_images[2], VkBuffer a_bufferStaging)
     {
       //// Now we shall start recording commands into the newly allocated command bufferStaging.
@@ -632,7 +685,7 @@ public:
 
       vkCmdFillBuffer(a_cmdBuff, a_bufferStaging, 0, a_width*a_height*sizeof(float)*4, 0); // clear this buffer just for an example and test cases. if we comment 'vkCmdCopyBuffer', we'll get black image
 
-      // we want to work with the whole mage
+      // we want to work with the whole image
       //
       VkImageSubresourceRange rangeWholeImage = {};
       rangeWholeImage.aspectMask     = VK_IMAGE_ASPECT_COLOR_BIT;
@@ -640,6 +693,20 @@ public:
       rangeWholeImage.levelCount     = 1;
       rangeWholeImage.baseArrayLayer = 0;
       rangeWholeImage.layerCount     = 1;
+
+      VkImageSubresourceLayers shittylayers = {};
+      shittylayers.aspectMask     = VK_IMAGE_ASPECT_COLOR_BIT;
+      shittylayers.mipLevel       = 0;
+      shittylayers.baseArrayLayer = 0;
+      shittylayers.layerCount     = 1;
+
+      VkBufferImageCopy wholeRegion = {};
+      wholeRegion.bufferOffset      = 0;
+      wholeRegion.bufferRowLength   = uint32_t(a_width);
+      wholeRegion.bufferImageHeight = uint32_t(a_height);
+      wholeRegion.imageExtent       = VkExtent3D{uint32_t(a_width), uint32_t(a_height), 1};
+      wholeRegion.imageOffset       = VkOffset3D{0,0,0};
+      wholeRegion.imageSubresource  = shittylayers;
 
       // at first we must move our images to 'VK_IMAGE_LAYOUT_GENERAL' layout to further clear them
       //
@@ -666,6 +733,9 @@ public:
       vkCmdClearColorImage(a_cmdBuff, a_images[0], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &clearVal, 1, &rangeWholeImage); // clear image with (1,1,1,1)
       vkCmdClearColorImage(a_cmdBuff, a_images[1], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &clearVal, 1, &rangeWholeImage); // clear image with (1,1,1,1)
 
+      vkCmdCopyBufferToImage(a_cmdBuff, a_bufferDynamic, a_images[0], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &wholeRegion);
+      vkCmdCopyBufferToImage(a_cmdBuff, a_bufferDynamic, a_images[1], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &wholeRegion);
+
       VkImageMemoryBarrier barForCopy[2];
       barForCopy[0] = imBarTransfer(a_images[0], rangeWholeImage, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
       barForCopy[1] = imBarTransfer(a_images[1], rangeWholeImage, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
@@ -678,19 +748,6 @@ public:
                            0, nullptr,     // buffer barriers
                            2, barForCopy); // image  barriers
 
-      VkImageSubresourceLayers shittylayers = {};
-      shittylayers.aspectMask     = VK_IMAGE_ASPECT_COLOR_BIT;
-      shittylayers.mipLevel       = 0;
-      shittylayers.baseArrayLayer = 0;
-      shittylayers.layerCount     = 1;
-
-      VkBufferImageCopy wholeRegion = {};
-      wholeRegion.bufferOffset      = 0;
-      wholeRegion.bufferRowLength   = uint32_t(a_width);
-      wholeRegion.bufferImageHeight = uint32_t(a_height);
-      wholeRegion.imageExtent       = VkExtent3D{uint32_t(a_width), uint32_t(a_height), 1};
-      wholeRegion.imageOffset       = VkOffset3D{0,0,0};
-      wholeRegion.imageSubresource  = shittylayers;
 
       vkCmdCopyImageToBuffer(a_cmdBuff, a_images[1], VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, a_bufferStaging, 1, &wholeRegion);
 
@@ -736,38 +793,45 @@ public:
       vkDestroyFence(a_device, fence, NULL);
     }
 
-    void cleanup() {
-        /*
-        Clean up all Vulkan Resources. 
-        */
+    void cleanup()
+    {
+      /*
+      Clean up all Vulkan Resources.
+      */
+      if (enableValidationLayers)
+      {
+          // destroy callback.
+          auto func = (PFN_vkDestroyDebugReportCallbackEXT)vkGetInstanceProcAddr(instance, "vkDestroyDebugReportCallbackEXT");
+          if (func == nullptr) {
+              throw std::runtime_error("Could not load vkDestroyDebugReportCallbackEXT");
+          }
+          func(instance, debugReportCallback, NULL);
+      }
 
-        if (enableValidationLayers) {
-            // destroy callback.
-            auto func = (PFN_vkDestroyDebugReportCallbackEXT)vkGetInstanceProcAddr(instance, "vkDestroyDebugReportCallbackEXT");
-            if (func == nullptr) {
-                throw std::runtime_error("Could not load vkDestroyDebugReportCallbackEXT");
-            }
-            func(instance, debugReportCallback, NULL);
-        }
+      if(bufferDynamic != NULL)
+      {
+        vkFreeMemory   (device, bufferMemoryDynamic, NULL);
+        vkDestroyBuffer(device, bufferDynamic, NULL);
+      }
 
-        vkFreeMemory   (device, bufferMemoryStaging, NULL);
-        vkDestroyBuffer(device, bufferStaging, NULL);
+      vkFreeMemory   (device, bufferMemoryStaging, NULL);
+      vkDestroyBuffer(device, bufferStaging, NULL);
 
-        vkFreeMemory   (device, bufferMemoryGPU, NULL);
-        vkDestroyBuffer(device, bufferGPU, NULL);
+      vkFreeMemory   (device, bufferMemoryGPU, NULL);
+      vkDestroyBuffer(device, bufferGPU, NULL);
 
-        vkFreeMemory  (device, imagesMemoryGPU, NULL);
-        vkDestroyImage(device, imageGPU[0], NULL);
-        vkDestroyImage(device, imageGPU[1], NULL);
+      vkFreeMemory  (device, imagesMemoryGPU, NULL);
+      vkDestroyImage(device, imageGPU[0], NULL);
+      vkDestroyImage(device, imageGPU[1], NULL);
 
-        vkDestroyShaderModule(device, computeShaderModule, NULL);
-        vkDestroyDescriptorPool(device, descriptorPool, NULL);
-        vkDestroyDescriptorSetLayout(device, descriptorSetLayout, NULL);
-        vkDestroyPipelineLayout(device, pipelineLayout, NULL);
-        vkDestroyPipeline(device, pipeline, NULL);
-        vkDestroyCommandPool(device, commandPool, NULL);	
-        vkDestroyDevice(device, NULL);
-        vkDestroyInstance(instance, NULL);		
+      vkDestroyShaderModule(device, computeShaderModule, NULL);
+      vkDestroyDescriptorPool(device, descriptorPool, NULL);
+      vkDestroyDescriptorSetLayout(device, descriptorSetLayout, NULL);
+      vkDestroyPipelineLayout(device, pipelineLayout, NULL);
+      vkDestroyPipeline(device, pipeline, NULL);
+      vkDestroyCommandPool(device, commandPool, NULL);
+      vkDestroyDevice(device, NULL);
+      vkDestroyInstance(instance, NULL);
     }
 };
 
