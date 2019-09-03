@@ -155,7 +155,18 @@ public:
       createWriteOnlyBuffer(device, physicalDevice, bufferSize,    // very simple example of allocation
                             &bufferGPU, &bufferMemoryGPU);         // (device, bufferSize) ==> (bufferGPU, bufferMemoryGPU)
 
-      createTwoRWTextures(device, physicalDevice, WIDTH, HEIGHT,
+      // test image filter pipeline here ... temp solution
+      //
+      int w,h;
+      auto imageData = LoadBMP("texture1.bmp", &w, &h);
+      if(imageData.size() == 0)
+      {
+        std::cout << "can't load texture 'texture1.bmp' " << std::endl;
+        return;
+      }
+
+
+      createTwoRWTextures(device, physicalDevice, w, h,
                           imageGPU, &imagesMemoryGPU);
 
       createDescriptorSetLayout(device, &descriptorSetLayout);                                          // here we will create a binding of bufferStaging to shader via descriptorSet
@@ -169,12 +180,7 @@ public:
       createCommandBuffer(device, queueFamilyIndex, pipeline, pipelineLayout,
                           &commandPool, &commandBuffer);
 
-      // test image filter pipeline here ... temp solution
-      //
-      int w,h;
-      auto imageData = LoadBMP("texture1.bmp", &w, &h);
-
-      if(imageData.size() != 0)
+      // load texture data to GPU
       {
         createDynamicBuffer(device, physicalDevice, w*h*sizeof(float)*4,
                             &bufferDynamic, &bufferMemoryDynamic);
@@ -188,14 +194,8 @@ public:
 
         std::cout << "doing filter computations ... " << std::endl;
         runCommandBuffer(commandBuffer, queue, device);
-
-        std::cout << "geting image back  ... " << std::endl;
-        getImageFromGPU(device, bufferMemoryStaging, w, h,                 // bufferMemoryStaging ==> imageData.data()
-                        imageData.data());
-
-        std::cout << "saving image       ... " << std::endl;
-        SaveBMP("texture1_out.bmp", imageData.data(), w, h);
       }
+
 
       // main shader
       {
@@ -400,7 +400,7 @@ public:
       imgCreateInfo.mipLevels     = 1;
       imgCreateInfo.samples       = VK_SAMPLE_COUNT_1_BIT;
       imgCreateInfo.tiling        = VK_IMAGE_TILING_OPTIMAL;
-      imgCreateInfo.usage         = VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT; // RW and copy in both ways
+      imgCreateInfo.usage         = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT; // copy to the texture and read then
       imgCreateInfo.sharingMode   = VK_SHARING_MODE_EXCLUSIVE;
       imgCreateInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
       imgCreateInfo.arrayLayers   = 1;
@@ -524,10 +524,11 @@ public:
       VkSamplerCreateInfo samplerInfo = {};
       {
         samplerInfo.sType        = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+        samplerInfo.pNext        = nullptr;
         samplerInfo.flags        = 0;
         samplerInfo.magFilter    = VK_FILTER_LINEAR;
         samplerInfo.minFilter    = VK_FILTER_LINEAR;
-        samplerInfo.mipmapMode   = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+        samplerInfo.mipmapMode   = VK_SAMPLER_MIPMAP_MODE_NEAREST;
         samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT;
         samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
         samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
@@ -538,6 +539,7 @@ public:
         samplerInfo.maxAnisotropy    = 1.0;
         samplerInfo.anisotropyEnable = VK_FALSE;
         samplerInfo.borderColor      = VK_BORDER_COLOR_FLOAT_OPAQUE_WHITE;
+        samplerInfo.unnormalizedCoordinates = VK_FALSE;
       }
       VK_CHECK_RESULT(vkCreateSampler(a_device, &samplerInfo, nullptr, a_samplers+0));
 
@@ -575,8 +577,6 @@ public:
       writeDescriptorSet2.pImageInfo      = &descriptorImageInfo;
 
       vkUpdateDescriptorSets(a_device, 1, &writeDescriptorSet2, 0, NULL);
-
-      int a = 2;
     }
 
     static void createComputePipeline(VkDevice a_device, const VkDescriptorSetLayout& a_dsLayout,
@@ -712,7 +712,7 @@ public:
 
 
       // transfer our texture to VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL from VK_IMAGE_LAYOUT_UNDEFINED
-      VkImageMemoryBarrier imgBar = {};
+      VkImageMemoryBarrier imgBar = {}; // imBarTransfer(a_image, WholeImageRange(), VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
       {
         imgBar.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
         imgBar.pNext = nullptr;
@@ -733,13 +733,12 @@ public:
       };
 
       vkCmdPipelineBarrier(a_cmdBuff,
-                           VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                           VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,  // VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT
                            VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
                            0,
                            0, nullptr,
                            0, nullptr,
                            1, &imgBar);
-
 
       /*
       We need to bind a pipeline, AND a descriptor set before we dispatch
@@ -749,7 +748,7 @@ public:
       vkCmdBindDescriptorSets(a_cmdBuff, VK_PIPELINE_BIND_POINT_COMPUTE, a_layout, 0, 1, &a_ds, 0, NULL);
 
       int wh[2] = {WIDTH,HEIGHT};
-      vkCmdPushConstants     (a_cmdBuff, a_layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(int)*2, wh);
+      vkCmdPushConstants(a_cmdBuff, a_layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(int)*2, wh);
 
       /*
       Calling vkCmdDispatch basically starts the compute pipeline, and executes the compute shader.
@@ -854,19 +853,19 @@ public:
       vkCmdCopyBufferToImage(a_cmdBuff, a_bufferDynamic, a_images[1], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &wholeRegion);
 
 
-      VkImageMemoryBarrier barForCopy[2];
-      barForCopy[0] = imBarTransfer(a_images[0], rangeWholeImage, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
-      barForCopy[1] = imBarTransfer(a_images[1], rangeWholeImage, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
-
-      vkCmdPipelineBarrier(a_cmdBuff,
-                           VK_PIPELINE_STAGE_TRANSFER_BIT,
-                           VK_PIPELINE_STAGE_TRANSFER_BIT,
-                           0,
-                           0, nullptr,     // general memory barriers
-                           0, nullptr,     // buffer barriers
-                           2, barForCopy); // image  barriers
-
-      vkCmdCopyImageToBuffer(a_cmdBuff, a_images[1], VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, a_bufferStaging, 1, &wholeRegion);
+      //VkImageMemoryBarrier barForCopy[2];
+      //barForCopy[0] = imBarTransfer(a_images[0], rangeWholeImage, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+      //barForCopy[1] = imBarTransfer(a_images[1], rangeWholeImage, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+      //
+      //vkCmdPipelineBarrier(a_cmdBuff,
+      //                     VK_PIPELINE_STAGE_TRANSFER_BIT,
+      //                     VK_PIPELINE_STAGE_TRANSFER_BIT,
+      //                     0,
+      //                     0, nullptr,     // general memory barriers
+      //                     0, nullptr,     // buffer barriers
+      //                     2, barForCopy); // image  barriers
+      //
+      //vkCmdCopyImageToBuffer(a_cmdBuff, a_images[1], VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, a_bufferStaging, 1, &wholeRegion);
 
 
 
