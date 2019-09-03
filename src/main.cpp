@@ -860,11 +860,11 @@ public:
      // Buffer size of the storage bufferStaging that will contain the rendered mandelbrot set.
      size_t bufferSize = sizeof(Pixel) * WIDTH * HEIGHT;
      std::cout << "creating resources ... " << std::endl;
-      CreateStagingBuffer(device, physicalDevice, bufferSize,      // very simple example of allocation
-                          &bufferStaging, &bufferMemoryStaging);   // (device, bufferSize) ==> (bufferStaging, bufferMemoryStaging)
+     CreateStagingBuffer(device, physicalDevice, bufferSize,      // very simple example of allocation
+                         &bufferStaging, &bufferMemoryStaging);   // (device, bufferSize) ==> (bufferStaging, bufferMemoryStaging)
 
-      CreateWriteOnlyBuffer(device, physicalDevice, bufferSize,    // very simple example of allocation
-                            &bufferGPU, &bufferMemoryGPU);         // (device, bufferSize) ==> (bufferGPU, bufferMemoryGPU)
+     CreateWriteOnlyBuffer(device, physicalDevice, bufferSize,    // very simple example of allocation
+                           &bufferGPU, &bufferMemoryGPU);         // (device, bufferSize) ==> (bufferGPU, bufferMemoryGPU)
 
      // test image filter pipeline here ... temp solution
      //
@@ -876,20 +876,19 @@ public:
        return;
      }
 
-      CreateTexture(device, physicalDevice, w, h,
-                    &imageGPU, &imagesMemoryGPU);
+     CreateTexture(device, physicalDevice, w, h,
+                   &imageGPU, &imagesMemoryGPU);
 
-      CreateDescriptorSetLayout(device, &descriptorSetLayout);                                          // here we will create a binding of bufferStaging to shader via descriptorSet
-      CreateDescriptorSetForOurBufferAndTexture(device, bufferGPU, bufferSize, &descriptorSetLayout,
-                                                imageGPU, // (device, bufferGPU, bufferSize, descriptorSetLayout) ==>  #NOTE: we write now to 'bufferGPU', not 'bufferStaging'
-                                                &descriptorPool, &descriptorSet, &imageSampler, &imageView);      // (descriptorPool, descriptorSet, imageSamplers, imageViews)
+     CreateDescriptorSetLayout(device, &descriptorSetLayout);                                                 // here we will create a binding of bufferStaging to shader via descriptorSet
+     CreateDescriptorSetForOurBufferAndTexture(device, bufferGPU, bufferSize, &descriptorSetLayout, imageGPU, // (device, bufferGPU, bufferSize, descriptorSetLayout) ==>  #NOTE: we write now to 'bufferGPU', not 'bufferStaging'
+                                               &descriptorPool, &descriptorSet, &imageSampler, &imageView);   // (descriptorPool, descriptorSet, imageSamplers, imageViews)
 
      std::cout << "compiling shaders  ... " << std::endl;
-      CreateComputePipeline(device, descriptorSetLayout,
-                            &computeShaderModule, &pipeline, &pipelineLayout);
+     CreateComputePipeline(device, descriptorSetLayout,
+                           &computeShaderModule, &pipeline, &pipelineLayout);
 
-      CreateCommandBuffer(device, queueFamilyIndex, pipeline, pipelineLayout,
-                          &commandPool, &commandBuffer);
+     CreateCommandBuffer(device, queueFamilyIndex, pipeline, pipelineLayout,
+                         &commandPool, &commandBuffer);
 
      // load texture data to GPU
      {
@@ -905,7 +904,6 @@ public:
        std::cout << "doing some computations ... " << std::endl;
        RunCommandBuffer(commandBuffer, queue, device);
      }
-
 
      // main shader
      {
@@ -930,8 +928,7 @@ public:
 
      // Clean up all vulkan resources.
      std::cout << "destroying all     ... " << std::endl;
-      Cleanup();
-
+     Cleanup();
    }
 };
 
