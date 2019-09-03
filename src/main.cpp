@@ -23,6 +23,122 @@ constexpr bool enableValidationLayers = true;
 
 #include "vk_utils.h"
 
+struct CustomVulkanTexture // in fact this is bad example ... but simple
+{
+  CustomVulkanTexture() : imagesMemoryGPU(0), imageGPU(0), imageSampler(0), imageView(0) {}
+
+  void Release(VkDevice a_device)
+  {
+    vkFreeMemory      (a_device, imagesMemoryGPU, NULL);
+    vkDestroyImage    (a_device, imageGPU, NULL);
+    vkDestroyImageView(a_device, imageView, NULL);
+    vkDestroySampler  (a_device, imageSampler, NULL);
+  }
+
+  VkDeviceMemory imagesMemoryGPU; // this is bad design in fact, you should store memory somewhere else and/or use memory pools;
+  VkImage        imageGPU;
+  VkSampler      imageSampler;
+  VkImageView    imageView;
+
+  static CustomVulkanTexture Create2DTextureRGBA256(VkDevice a_device, VkPhysicalDevice a_physDevice, int w, int h);
+
+//protected:
+
+  static void CreateTexture(VkDevice a_device, VkPhysicalDevice a_physDevice, const int a_width, const int a_height,
+                            VkImage *a_images, VkDeviceMemory *a_pImagesMemory)
+  {
+    // first create desired objects, but still don't allocate memory for them
+    //
+    VkImageCreateInfo imgCreateInfo = {};
+    imgCreateInfo.sType         = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+    imgCreateInfo.pNext         = nullptr;
+    imgCreateInfo.flags         = 0; // not sure about this ...
+    imgCreateInfo.imageType     = VK_IMAGE_TYPE_2D;
+    imgCreateInfo.format        = VK_FORMAT_R8G8B8A8_UNORM;
+    imgCreateInfo.extent        = VkExtent3D{uint32_t(a_width), uint32_t(a_height), 1};
+    imgCreateInfo.mipLevels     = 1;
+    imgCreateInfo.samples       = VK_SAMPLE_COUNT_1_BIT;
+    imgCreateInfo.tiling        = VK_IMAGE_TILING_OPTIMAL;
+    imgCreateInfo.usage         = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT; // copy to the texture and read then
+    imgCreateInfo.sharingMode   = VK_SHARING_MODE_EXCLUSIVE;
+    imgCreateInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    imgCreateInfo.arrayLayers   = 1;
+    VK_CHECK_RESULT(vkCreateImage(a_device, &imgCreateInfo, nullptr, a_images + 0));
+    // now allocate memory for both images
+    //
+    VkMemoryRequirements memoryRequirements;
+    vkGetImageMemoryRequirements(a_device, a_images[0], &memoryRequirements);
+    VkMemoryAllocateInfo allocateInfo = {};
+    allocateInfo.sType           = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    allocateInfo.allocationSize  = memoryRequirements.size; // specify required memory.
+    allocateInfo.memoryTypeIndex = vk_utils::FindMemoryType(memoryRequirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, a_physDevice);
+    VK_CHECK_RESULT(vkAllocateMemory(a_device, &allocateInfo, NULL, a_pImagesMemory)); // allocate memory on device.
+    VK_CHECK_RESULT(vkBindImageMemory(a_device, a_images[0], (*a_pImagesMemory), 0));
+  }
+
+  void CreateOther(VkDevice a_device)
+  {
+    VkSamplerCreateInfo samplerInfo = {};
+    {
+      samplerInfo.sType        = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+      samplerInfo.pNext        = nullptr;
+      samplerInfo.flags        = 0;
+      samplerInfo.magFilter    = VK_FILTER_LINEAR;
+      samplerInfo.minFilter    = VK_FILTER_LINEAR;
+      samplerInfo.mipmapMode   = VK_SAMPLER_MIPMAP_MODE_NEAREST;
+      samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+      samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+      samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+      samplerInfo.mipLodBias   = 0.0f;
+      samplerInfo.compareOp    = VK_COMPARE_OP_NEVER;
+      samplerInfo.minLod           = 0;
+      samplerInfo.maxLod           = 0;
+      samplerInfo.maxAnisotropy    = 1.0;
+      samplerInfo.anisotropyEnable = VK_FALSE;
+      samplerInfo.borderColor      = VK_BORDER_COLOR_FLOAT_OPAQUE_WHITE;
+      samplerInfo.unnormalizedCoordinates = VK_FALSE;
+    }
+    VK_CHECK_RESULT(vkCreateSampler(a_device, &samplerInfo, nullptr, &this->imageSampler));
+
+    VkImageViewCreateInfo imageViewInfo = {};
+    {
+      imageViewInfo.sType      = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+      imageViewInfo.flags      = 0;
+      imageViewInfo.viewType   = VK_IMAGE_VIEW_TYPE_2D;
+      imageViewInfo.format     = VK_FORMAT_R8G8B8A8_UNORM;
+      imageViewInfo.components = { VK_COMPONENT_SWIZZLE_R, VK_COMPONENT_SWIZZLE_G, VK_COMPONENT_SWIZZLE_B, VK_COMPONENT_SWIZZLE_A };
+      // The subresource range describes the set of mip levels (and array layers) that can be accessed through this image view
+      // It's possible to create multiple image views for a single image referring to different (and/or overlapping) ranges of the image
+      imageViewInfo.subresourceRange.aspectMask     = VK_IMAGE_ASPECT_COLOR_BIT;
+      imageViewInfo.subresourceRange.baseMipLevel   = 0;
+      imageViewInfo.subresourceRange.baseArrayLayer = 0;
+      imageViewInfo.subresourceRange.layerCount     = 1;
+      imageViewInfo.subresourceRange.levelCount     = 1;
+      // The view will be based on the texture's image
+      imageViewInfo.image = this->imageGPU;
+    }
+    VK_CHECK_RESULT(vkCreateImageView(a_device, &imageViewInfo, nullptr, &this->imageView));
+  }
+
+
+};
+
+CustomVulkanTexture CustomVulkanTexture::Create2DTextureRGBA256(VkDevice a_device, VkPhysicalDevice a_physDevice, int w, int h)
+{
+  CustomVulkanTexture res;
+
+  res.CreateTexture(a_device, a_physDevice, w, h,         // (w,h) ==> (imageGPU, imagesMemoryGPU); for R8G8B8A8_UNORM format
+                    &res.imageGPU, &res.imagesMemoryGPU); //
+
+  res.CreateOther(a_device);
+
+  return res;
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 /*
 The application launches a compute shader that renders the mandelbrot set,
@@ -94,11 +210,7 @@ private:
 
     // we change this sample to work with textures
     //
-    VkDeviceMemory imagesMemoryGPU;
-    VkImage        imageGPU;
-    VkSampler      imageSampler;
-    VkImageView    imageView;
-
+    CustomVulkanTexture img;
 
     std::vector<const char *> enabledLayers;
 
@@ -273,42 +385,6 @@ public:
       VK_CHECK_RESULT(vkBindBufferMemory(a_device, (*a_pBuffer), (*a_pBufferMemory), 0));
     }
 
-    static void CreateTexture(VkDevice a_device, VkPhysicalDevice a_physDevice, const int a_width, const int a_height,
-                              VkImage *a_images, VkDeviceMemory *a_pImagesMemory)
-    {
-      // first create desired objects, but still don't allocate memory for them
-      //
-      VkImageCreateInfo imgCreateInfo = {};
-      imgCreateInfo.sType         = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
-      imgCreateInfo.pNext         = nullptr;
-      imgCreateInfo.flags         = 0; // not sure about this ...
-      imgCreateInfo.imageType     = VK_IMAGE_TYPE_2D;
-      imgCreateInfo.format        = VK_FORMAT_R8G8B8A8_UNORM; // we create float4 texture just to keep things simple, this is and example at least ...
-      imgCreateInfo.extent        = VkExtent3D{uint32_t(a_width), uint32_t(a_height), 1};
-      imgCreateInfo.mipLevels     = 1;
-      imgCreateInfo.samples       = VK_SAMPLE_COUNT_1_BIT;
-      imgCreateInfo.tiling        = VK_IMAGE_TILING_OPTIMAL;
-      imgCreateInfo.usage         = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT; // copy to the texture and read then
-      imgCreateInfo.sharingMode   = VK_SHARING_MODE_EXCLUSIVE;
-      imgCreateInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-      imgCreateInfo.arrayLayers   = 1;
-
-      VK_CHECK_RESULT(vkCreateImage(a_device, &imgCreateInfo, nullptr, a_images + 0));
-
-      // now allocate memory for both images
-      //
-      VkMemoryRequirements memoryRequirements;
-      vkGetImageMemoryRequirements(a_device, a_images[0], &memoryRequirements);
-
-      VkMemoryAllocateInfo allocateInfo = {};
-      allocateInfo.sType           = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-      allocateInfo.allocationSize  = memoryRequirements.size; // specify required memory.
-      allocateInfo.memoryTypeIndex = vk_utils::FindMemoryType(memoryRequirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, a_physDevice);
-
-      VK_CHECK_RESULT(vkAllocateMemory(a_device, &allocateInfo, NULL, a_pImagesMemory)); // allocate memory on device.
-      VK_CHECK_RESULT(vkBindImageMemory(a_device, a_images[0], (*a_pImagesMemory), 0));
-    }
-
     static void CreateDescriptorSetLayout(VkDevice a_device, VkDescriptorSetLayout *a_pDSLayout)
     {
        /*
@@ -335,17 +411,15 @@ public:
 
        VkDescriptorSetLayoutCreateInfo descriptorSetLayoutCreateInfo = {};
        descriptorSetLayoutCreateInfo.sType        = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-       descriptorSetLayoutCreateInfo.bindingCount = 2; // only a single binding in this descriptor set layout.
+       descriptorSetLayoutCreateInfo.bindingCount = 2; // buffer and texture
        descriptorSetLayoutCreateInfo.pBindings    = descriptorSetLayoutBinding;
 
        // Create the descriptor set layout.
        VK_CHECK_RESULT(vkCreateDescriptorSetLayout(a_device, &descriptorSetLayoutCreateInfo, NULL, a_pDSLayout));
     }
 
-    static void CreateDescriptorSetForOurBufferAndTexture(VkDevice a_device, VkBuffer a_buffer, size_t a_bufferSize,
-                                                          const VkDescriptorSetLayout *a_pDSLayout, VkImage a_image,
-                                                          VkDescriptorPool *a_pDSPool, VkDescriptorSet *a_pDS,
-                                                          VkSampler *a_samplers, VkImageView *a_views)
+    void CreateDescriptorSetForOurBufferAndTexture(VkDevice a_device, VkBuffer a_buffer, size_t a_bufferSize, const VkDescriptorSetLayout *a_pDSLayout, VkImage a_image,
+                                                   VkDescriptorPool *a_pDSPool, VkDescriptorSet *a_pDS, VkSampler *a_samplers, VkImageView *a_views)
     {
       /*
       So we will allocate a descriptor set here.
@@ -409,51 +483,9 @@ public:
 
       /////////////////////////////////////////////////////////////////////////////////////////////////////////////// bind texture
 
-      VkSamplerCreateInfo samplerInfo = {};
-      {
-        samplerInfo.sType        = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
-        samplerInfo.pNext        = nullptr;
-        samplerInfo.flags        = 0;
-        samplerInfo.magFilter    = VK_FILTER_LINEAR;
-        samplerInfo.minFilter    = VK_FILTER_LINEAR;
-        samplerInfo.mipmapMode   = VK_SAMPLER_MIPMAP_MODE_NEAREST;
-        samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT;
-        samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
-        samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
-        samplerInfo.mipLodBias   = 0.0f;
-        samplerInfo.compareOp    = VK_COMPARE_OP_NEVER;
-        samplerInfo.minLod           = 0;
-        samplerInfo.maxLod           = 0;
-        samplerInfo.maxAnisotropy    = 1.0;
-        samplerInfo.anisotropyEnable = VK_FALSE;
-        samplerInfo.borderColor      = VK_BORDER_COLOR_FLOAT_OPAQUE_WHITE;
-        samplerInfo.unnormalizedCoordinates = VK_FALSE;
-      }
-      VK_CHECK_RESULT(vkCreateSampler(a_device, &samplerInfo, nullptr, a_samplers+0));
-
-      VkImageViewCreateInfo imageViewInfo = {};
-      {
-        imageViewInfo.sType      = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-        imageViewInfo.flags      = 0;
-        imageViewInfo.viewType   = VK_IMAGE_VIEW_TYPE_2D;
-        imageViewInfo.format     = VK_FORMAT_R8G8B8A8_UNORM;
-        imageViewInfo.components = { VK_COMPONENT_SWIZZLE_R, VK_COMPONENT_SWIZZLE_G, VK_COMPONENT_SWIZZLE_B, VK_COMPONENT_SWIZZLE_A };
-        // The subresource range describes the set of mip levels (and array layers) that can be accessed through this image view
-        // It's possible to create multiple image views for a single image referring to different (and/or overlapping) ranges of the image
-        imageViewInfo.subresourceRange.aspectMask     = VK_IMAGE_ASPECT_COLOR_BIT;
-        imageViewInfo.subresourceRange.baseMipLevel   = 0;
-        imageViewInfo.subresourceRange.baseArrayLayer = 0;
-        imageViewInfo.subresourceRange.layerCount     = 1;
-        imageViewInfo.subresourceRange.levelCount     = 1;
-        // The view will be based on the texture's image
-        imageViewInfo.image = a_image;
-      }
-      VK_CHECK_RESULT(vkCreateImageView(a_device, &imageViewInfo, nullptr, a_views+0));
-
-
       VkDescriptorImageInfo descriptorImageInfo = {};
-      descriptorImageInfo.sampler     = *(a_samplers+0);
-      descriptorImageInfo.imageView   = *(a_views+0);
+      descriptorImageInfo.sampler     = img.imageSampler;
+      descriptorImageInfo.imageView   = img.imageView;
       descriptorImageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 
       VkWriteDescriptorSet writeDescriptorSet2 = {};
@@ -817,11 +849,7 @@ public:
       vkFreeMemory   (device, bufferMemoryGPU, NULL);
       vkDestroyBuffer(device, bufferGPU, NULL);
 
-      vkFreeMemory  (device, imagesMemoryGPU, NULL);
-      vkDestroyImage(device, imageGPU, NULL);
-
-      vkDestroyImageView(device, imageView, NULL);
-      vkDestroySampler(device, imageSampler, NULL);
+      img.Release(device); // we have to explicitly destroy them before vkDestroyInstance and vkDestroyDevice
 
       vkDestroyShaderModule(device, computeShaderModule, NULL);
       vkDestroyDescriptorPool(device, descriptorPool, NULL);
@@ -876,12 +904,12 @@ public:
        return;
      }
 
-     CreateTexture(device, physicalDevice, w, h,
-                   &imageGPU, &imagesMemoryGPU);
+     img = CustomVulkanTexture::Create2DTextureRGBA256(device, physicalDevice, w, h);
+
 
      CreateDescriptorSetLayout(device, &descriptorSetLayout);                                                 // here we will create a binding of bufferStaging to shader via descriptorSet
-     CreateDescriptorSetForOurBufferAndTexture(device, bufferGPU, bufferSize, &descriptorSetLayout, imageGPU, // (device, bufferGPU, bufferSize, descriptorSetLayout) ==>  #NOTE: we write now to 'bufferGPU', not 'bufferStaging'
-                                               &descriptorPool, &descriptorSet, &imageSampler, &imageView);   // (descriptorPool, descriptorSet, imageSamplers, imageViews)
+     CreateDescriptorSetForOurBufferAndTexture(device, bufferGPU, bufferSize, &descriptorSetLayout, img.imageGPU, // (device, bufferGPU, bufferSize, descriptorSetLayout) ==>  #NOTE: we write now to 'bufferGPU', not 'bufferStaging'
+                                               &descriptorPool, &descriptorSet, &img.imageSampler, &img.imageView);   // (descriptorPool, descriptorSet, imageSamplers, imageViews)
 
      std::cout << "compiling shaders  ... " << std::endl;
      CreateComputePipeline(device, descriptorSetLayout,
@@ -895,7 +923,7 @@ public:
        CreateDynamicBuffer(device, physicalDevice, w*h*sizeof(int),
                            &bufferDynamic, &bufferMemoryDynamic);
 
-       //PutImageToGPU(device, bufferMemoryDynamic, w, h, imageData.data()); // bufferMemoryDynamic <== imageData.data()
+       //                                                                                  // bufferMemoryDynamic <== imageData.data()
        {
          void *mappedMemory = nullptr;
          vkMapMemory(device, bufferMemoryDynamic, 0, w*h*sizeof(int), 0, &mappedMemory);
@@ -905,7 +933,7 @@ public:
 
        vkResetCommandBuffer(commandBuffer, 0);
        RecordCommandsOfCopyImageDataToTexture(commandBuffer, pipeline, w, h, bufferDynamic, // bufferDynamic ==> imageGPU
-                                              &imageGPU, bufferStaging);
+                                              &img.imageGPU, bufferStaging);
 
        std::cout << "doing some computations ... " << std::endl;
        RunCommandBuffer(commandBuffer, queue, device);
@@ -913,7 +941,7 @@ public:
 
      // main shader
      {
-       RecordCommandsOfExecuteAndTransfer(commandBuffer, pipeline, pipelineLayout, descriptorSet, imageGPU,
+       RecordCommandsOfExecuteAndTransfer(commandBuffer, pipeline, pipelineLayout, descriptorSet, img.imageGPU,
                                           bufferSize, bufferGPU, bufferStaging);
        // Finally, run the recorded command bufferStaging.
        std::cout << "doing computations ... " << std::endl;
