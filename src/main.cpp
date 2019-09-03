@@ -95,7 +95,9 @@ private:
     // we change this sample to work with textures
     //
     VkDeviceMemory imagesMemoryGPU;
-    VkImage        imageGPU[2];
+    VkImage        imageGPU     [2];
+    VkSampler      imageSamplers[2];
+    VkImageView    imageViews   [2];
 
 
     std::vector<const char *> enabledLayers;
@@ -156,9 +158,9 @@ public:
       createTwoRWTextures(device, physicalDevice, WIDTH, HEIGHT,
                           imageGPU, &imagesMemoryGPU);
 
-      createDescriptorSetLayout(device, &descriptorSetLayout);                                 // here we will create a binding of bufferStaging to shader via descriptorSet
-      createDescriptorSetForOurBuffer(device, bufferGPU, bufferSize, &descriptorSetLayout,     // (device, bufferGPU, bufferSize, descriptorSetLayout) ==>  #NOTE: we write now to 'bufferGPU', not 'bufferStaging'
-                                      &descriptorPool, &descriptorSet);                        // (descriptorPool, descriptorSet)
+      createDescriptorSetLayout(device, &descriptorSetLayout);                                          // here we will create a binding of bufferStaging to shader via descriptorSet
+      createDescriptorSetForOurBuffer(device, bufferGPU, bufferSize, &descriptorSetLayout, imageGPU[0], // (device, bufferGPU, bufferSize, descriptorSetLayout) ==>  #NOTE: we write now to 'bufferGPU', not 'bufferStaging'
+                                      &descriptorPool, &descriptorSet, imageSamplers, imageViews);      // (descriptorPool, descriptorSet, imageSamplers, imageViews)
 
       std::cout << "compiling shaders  ... " << std::endl;
       createComputePipeline(device, descriptorSetLayout,
@@ -167,7 +169,7 @@ public:
       createCommandBuffer(device, queueFamilyIndex, pipeline, pipelineLayout,
                           &commandPool, &commandBuffer);
 
-      recordCommandsOfExecuteAndTransfer(commandBuffer, pipeline, pipelineLayout, descriptorSet,
+      recordCommandsOfExecuteAndTransfer(commandBuffer, pipeline, pipelineLayout, descriptorSet, imageGPU[0],
                                          bufferSize, bufferGPU, bufferStaging);
 
       // Finally, run the recorded command bufferStaging.
@@ -427,24 +429,34 @@ public:
        This binds to
          layout(std140, binding = 0) bufferStaging buf
        in the compute shader.
+
+       the second descriptor is for our texture
+
        */
-       VkDescriptorSetLayoutBinding descriptorSetLayoutBinding = {};
-       descriptorSetLayoutBinding.binding         = 0; // binding = 0
-       descriptorSetLayoutBinding.descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-       descriptorSetLayoutBinding.descriptorCount = 1;
-       descriptorSetLayoutBinding.stageFlags      = VK_SHADER_STAGE_COMPUTE_BIT;
+       VkDescriptorSetLayoutBinding descriptorSetLayoutBinding[2];
+       descriptorSetLayoutBinding[0].binding            = 0;
+       descriptorSetLayoutBinding[0].descriptorType     = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+       descriptorSetLayoutBinding[0].descriptorCount    = 1;
+       descriptorSetLayoutBinding[0].stageFlags         = VK_SHADER_STAGE_COMPUTE_BIT;
+       descriptorSetLayoutBinding[0].pImmutableSamplers = nullptr;
+
+       descriptorSetLayoutBinding[1].binding            = 1;
+       descriptorSetLayoutBinding[1].descriptorType     = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+       descriptorSetLayoutBinding[1].descriptorCount    = 1;
+       descriptorSetLayoutBinding[1].stageFlags         = VK_SHADER_STAGE_COMPUTE_BIT;
+       descriptorSetLayoutBinding[1].pImmutableSamplers = nullptr;
 
        VkDescriptorSetLayoutCreateInfo descriptorSetLayoutCreateInfo = {};
        descriptorSetLayoutCreateInfo.sType        = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-       descriptorSetLayoutCreateInfo.bindingCount = 1; // only a single binding in this descriptor set layout.
-       descriptorSetLayoutCreateInfo.pBindings    = &descriptorSetLayoutBinding;
+       descriptorSetLayoutCreateInfo.bindingCount = 2; // only a single binding in this descriptor set layout.
+       descriptorSetLayoutCreateInfo.pBindings    = descriptorSetLayoutBinding;
 
        // Create the descriptor set layout.
        VK_CHECK_RESULT(vkCreateDescriptorSetLayout(a_device, &descriptorSetLayoutCreateInfo, NULL, a_pDSLayout));
     }
 
-    static void createDescriptorSetForOurBuffer(VkDevice a_device, VkBuffer a_buffer, size_t a_bufferSize, const VkDescriptorSetLayout* a_pDSLayout,
-                                                VkDescriptorPool* a_pDSPool, VkDescriptorSet* a_pDS)
+    static void createDescriptorSetForOurBuffer(VkDevice a_device, VkBuffer a_buffer, size_t a_bufferSize, const VkDescriptorSetLayout* a_pDSLayout, VkImage a_image,
+                                                VkDescriptorPool* a_pDSPool, VkDescriptorSet* a_pDS, VkSampler* a_samplers, VkImageView* a_views)
     {
       /*
       So we will allocate a descriptor set here.
@@ -452,17 +464,20 @@ public:
       */
 
       /*
-      Our descriptor pool can only allocate a single storage bufferStaging.
+      Our descriptor pool can only allocate a storage buffer and a texture
       */
-      VkDescriptorPoolSize descriptorPoolSize = {};
-      descriptorPoolSize.type            = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-      descriptorPoolSize.descriptorCount = 1;
+      VkDescriptorPoolSize descriptorPoolSize[2];
+      descriptorPoolSize[0].type            = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+      descriptorPoolSize[0].descriptorCount = 1;
+      descriptorPoolSize[1].type            = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+      descriptorPoolSize[1].descriptorCount = 1;
+
 
       VkDescriptorPoolCreateInfo descriptorPoolCreateInfo = {};
       descriptorPoolCreateInfo.sType         = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-      descriptorPoolCreateInfo.maxSets       = 1; // we only need to allocate one descriptor set from the pool.
-      descriptorPoolCreateInfo.poolSizeCount = 1;
-      descriptorPoolCreateInfo.pPoolSizes    = &descriptorPoolSize;
+      descriptorPoolCreateInfo.maxSets       = 1; // we need to allocate at least 1 descriptor set
+      descriptorPoolCreateInfo.poolSizeCount = 2;
+      descriptorPoolCreateInfo.pPoolSizes    = descriptorPoolSize;
 
       // create descriptor pool.
       VK_CHECK_RESULT(vkCreateDescriptorPool(a_device, &descriptorPoolCreateInfo, NULL, a_pDSPool));
@@ -473,7 +488,7 @@ public:
       VkDescriptorSetAllocateInfo descriptorSetAllocateInfo = {};
       descriptorSetAllocateInfo.sType              = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
       descriptorSetAllocateInfo.descriptorPool     = (*a_pDSPool); // pool to allocate from.
-      descriptorSetAllocateInfo.descriptorSetCount = 1;            // allocate a single descriptor set.
+      descriptorSetAllocateInfo.descriptorSetCount = 1;            // allocate a descriptor set for buffer and image
       descriptorSetAllocateInfo.pSetLayouts        = a_pDSLayout;
 
       // allocate descriptor set.
@@ -492,7 +507,7 @@ public:
 
       VkWriteDescriptorSet writeDescriptorSet = {};
       writeDescriptorSet.sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-      writeDescriptorSet.dstSet          = (*a_pDS); // write to this descriptor set.
+      writeDescriptorSet.dstSet          = *(a_pDS+0); // write to the first descriptor set.
       writeDescriptorSet.dstBinding      = 0;        // write to the first, and only binding.
       writeDescriptorSet.descriptorCount = 1;        // update a single descriptor.
       writeDescriptorSet.descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER; // storage bufferStaging.
@@ -500,6 +515,65 @@ public:
 
       // perform the update of the descriptor set.
       vkUpdateDescriptorSets(a_device, 1, &writeDescriptorSet, 0, NULL);
+
+      ///////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+      VkSamplerCreateInfo samplerInfo = {};
+      {
+        samplerInfo.sType        = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+        samplerInfo.flags        = 0;
+        samplerInfo.magFilter    = VK_FILTER_LINEAR;
+        samplerInfo.minFilter    = VK_FILTER_LINEAR;
+        samplerInfo.mipmapMode   = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+        samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+        samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+        samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+        samplerInfo.mipLodBias   = 0.0f;
+        samplerInfo.compareOp    = VK_COMPARE_OP_NEVER;
+        samplerInfo.minLod           = 0;
+        samplerInfo.maxLod           = 0;
+        samplerInfo.maxAnisotropy    = 1.0;
+        samplerInfo.anisotropyEnable = VK_FALSE;
+        samplerInfo.borderColor      = VK_BORDER_COLOR_FLOAT_OPAQUE_WHITE;
+      }
+      VK_CHECK_RESULT(vkCreateSampler(a_device, &samplerInfo, nullptr, a_samplers+0));
+
+      VkImageViewCreateInfo imageViewInfo = {};
+      {
+        imageViewInfo.sType      = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+        imageViewInfo.flags      = 0;
+        imageViewInfo.viewType   = VK_IMAGE_VIEW_TYPE_2D;
+        imageViewInfo.format     = VK_FORMAT_R32G32B32A32_SFLOAT;
+        imageViewInfo.components = { VK_COMPONENT_SWIZZLE_R, VK_COMPONENT_SWIZZLE_G, VK_COMPONENT_SWIZZLE_B, VK_COMPONENT_SWIZZLE_A };
+        // The subresource range describes the set of mip levels (and array layers) that can be accessed through this image view
+        // It's possible to create multiple image views for a single image referring to different (and/or overlapping) ranges of the image
+        imageViewInfo.subresourceRange.aspectMask     = VK_IMAGE_ASPECT_COLOR_BIT;
+        imageViewInfo.subresourceRange.baseMipLevel   = 0;
+        imageViewInfo.subresourceRange.baseArrayLayer = 0;
+        imageViewInfo.subresourceRange.layerCount     = 1;
+        imageViewInfo.subresourceRange.levelCount     = 1;
+        // The view will be based on the texture's image
+        imageViewInfo.image = a_image;
+      }
+      VK_CHECK_RESULT(vkCreateImageView(a_device, &imageViewInfo, nullptr, a_views+0));
+
+
+      VkDescriptorImageInfo descriptorImageInfo = {};
+      descriptorImageInfo.sampler     = *(a_samplers+0);
+      descriptorImageInfo.imageView   = *(a_views+0);
+      descriptorImageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+
+      VkWriteDescriptorSet writeDescriptorSet2 = {};
+      writeDescriptorSet2.sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+      writeDescriptorSet2.dstSet          = *(a_pDS+0); // write to second descriptor set.
+      writeDescriptorSet2.dstBinding      = 1;          // second binding
+      writeDescriptorSet2.descriptorCount = 1;          // update a single descriptor.
+      writeDescriptorSet2.descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER; // image.
+      writeDescriptorSet2.pImageInfo      = &descriptorImageInfo;
+
+      vkUpdateDescriptorSets(a_device, 1, &writeDescriptorSet2, 0, NULL);
+
+      int a = 2;
     }
 
     static void createComputePipeline(VkDevice a_device, const VkDescriptorSetLayout& a_dsLayout,
@@ -591,7 +665,7 @@ public:
     }
 
 
-    static void recordCommandsOfExecuteAndTransfer(VkCommandBuffer a_cmdBuff, VkPipeline a_pipeline, VkPipelineLayout a_layout, const VkDescriptorSet& a_ds,
+    static void recordCommandsOfExecuteAndTransfer(VkCommandBuffer a_cmdBuff, VkPipeline a_pipeline, VkPipelineLayout a_layout, const VkDescriptorSet& a_ds, VkImage a_image,
                                                    size_t a_bufferSize, VkBuffer a_bufferGPU, VkBuffer a_bufferStaging)
     {
       /*
@@ -603,6 +677,37 @@ public:
       VK_CHECK_RESULT(vkBeginCommandBuffer(a_cmdBuff, &beginInfo)); // start recording commands.
 
       vkCmdFillBuffer(a_cmdBuff, a_bufferStaging, 0, a_bufferSize, 0); // clear this buffer just for an example and test cases. if we comment 'vkCmdCopyBuffer', we'll get black image
+
+
+      // transfer our texture to VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL from VK_IMAGE_LAYOUT_UNDEFINED
+      VkImageMemoryBarrier imgBar = {};
+      {
+        imgBar.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+        imgBar.pNext = nullptr;
+        imgBar.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        imgBar.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+
+        imgBar.srcAccessMask       = 0;
+        imgBar.dstAccessMask       = VK_ACCESS_SHADER_READ_BIT;
+        imgBar.oldLayout           = VK_IMAGE_LAYOUT_UNDEFINED;
+        imgBar.newLayout           = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        imgBar.image               = a_image;
+
+        imgBar.subresourceRange.aspectMask     = VK_IMAGE_ASPECT_COLOR_BIT;
+        imgBar.subresourceRange.baseMipLevel   = 0;
+        imgBar.subresourceRange.levelCount     = 1;
+        imgBar.subresourceRange.baseArrayLayer = 0;
+        imgBar.subresourceRange.layerCount     = 1;
+      };
+
+      vkCmdPipelineBarrier(a_cmdBuff,
+                           VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                           VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                           0,
+                           0, nullptr,
+                           0, nullptr,
+                           1, &imgBar);
+
 
       /*
       We need to bind a pipeline, AND a descriptor set before we dispatch
@@ -711,8 +816,10 @@ public:
       // at first we must move our images to 'VK_IMAGE_LAYOUT_GENERAL' layout to further clear them
       //
       VkImageMemoryBarrier moveToGeneralBar[2];
-      moveToGeneralBar[0] = imBarTransfer(a_images[0], rangeWholeImage, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
-      moveToGeneralBar[1] = imBarTransfer(a_images[1], rangeWholeImage, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+      {
+        moveToGeneralBar[0] = imBarTransfer(a_images[0], rangeWholeImage, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+        moveToGeneralBar[1] = imBarTransfer(a_images[1], rangeWholeImage, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+      }
 
       vkCmdPipelineBarrier(a_cmdBuff,
                            VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
@@ -736,6 +843,7 @@ public:
       vkCmdCopyBufferToImage(a_cmdBuff, a_bufferDynamic, a_images[0], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &wholeRegion);
       vkCmdCopyBufferToImage(a_cmdBuff, a_bufferDynamic, a_images[1], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &wholeRegion);
 
+
       VkImageMemoryBarrier barForCopy[2];
       barForCopy[0] = imBarTransfer(a_images[0], rangeWholeImage, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
       barForCopy[1] = imBarTransfer(a_images[1], rangeWholeImage, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
@@ -748,8 +856,9 @@ public:
                            0, nullptr,     // buffer barriers
                            2, barForCopy); // image  barriers
 
-
       vkCmdCopyImageToBuffer(a_cmdBuff, a_images[1], VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, a_bufferStaging, 1, &wholeRegion);
+
+
 
       VK_CHECK_RESULT(vkEndCommandBuffer(a_cmdBuff)); // end recording commands.
     }
@@ -823,6 +932,9 @@ public:
       vkFreeMemory  (device, imagesMemoryGPU, NULL);
       vkDestroyImage(device, imageGPU[0], NULL);
       vkDestroyImage(device, imageGPU[1], NULL);
+
+      vkDestroyImageView(device, imageViews[0], NULL);
+      vkDestroySampler(device, imageSamplers[0], NULL);
 
       vkDestroyShaderModule(device, computeShaderModule, NULL);
       vkDestroyDescriptorPool(device, descriptorPool, NULL);
