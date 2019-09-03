@@ -116,118 +116,6 @@ private:
 public:
     ComputeApplication() : bufferDynamic(NULL), bufferMemoryDynamic(NULL) { }
 
-    void run()
-    {
-      const int deviceId = 0;
-
-      std::cout << "init vulkan for device " << deviceId << " ... " << std::endl;
-
-      instance = vk_utils::CreateInstance(enableValidationLayers, enabledLayers);
-
-      if(enableValidationLayers)
-      {
-        vk_utils::InitDebugReportCallback(instance,
-                                          &debugReportCallbackFn, &debugReportCallback);
-      }
-
-      physicalDevice = vk_utils::FindPhysicalDevice(instance, true, deviceId);
-
-      /*
-      Groups of queues that have the same capabilities(for instance, they all supports graphics and computer operations),
-      are grouped into queue families.
-
-      When submitting a command bufferStaging, you must specify to which queue in the family you are submitting to.
-      This variable keeps track of the index of that queue in its family.
-      */
-      uint32_t queueFamilyIndex = vk_utils::GetComputeQueueFamilyIndex(physicalDevice);
-
-      device = vk_utils::CreateLogicalDevice(queueFamilyIndex, physicalDevice, enabledLayers);
-
-      vkGetDeviceQueue(device, queueFamilyIndex, 0, &queue);
-
-      // Buffer size of the storage bufferStaging that will contain the rendered mandelbrot set.
-      size_t bufferSize = sizeof(Pixel) * WIDTH * HEIGHT;
-
-      std::cout << "creating resources ... " << std::endl;
-      createStagingBuffer(device, physicalDevice, bufferSize,      // very simple example of allocation
-                          &bufferStaging, &bufferMemoryStaging);   // (device, bufferSize) ==> (bufferStaging, bufferMemoryStaging)
-
-      createWriteOnlyBuffer(device, physicalDevice, bufferSize,    // very simple example of allocation
-                            &bufferGPU, &bufferMemoryGPU);         // (device, bufferSize) ==> (bufferGPU, bufferMemoryGPU)
-
-      // test image filter pipeline here ... temp solution
-      //
-      int w,h;
-      auto imageData = LoadBMP("texture1.bmp", &w, &h);
-      if(imageData.size() == 0)
-      {
-        std::cout << "can't load texture 'texture1.bmp' " << std::endl;
-        return;
-      }
-
-
-      createTwoRWTextures(device, physicalDevice, w, h,
-                          imageGPU, &imagesMemoryGPU);
-
-      createDescriptorSetLayout(device, &descriptorSetLayout);                                          // here we will create a binding of bufferStaging to shader via descriptorSet
-      createDescriptorSetForOurBuffer(device, bufferGPU, bufferSize, &descriptorSetLayout, imageGPU[0], // (device, bufferGPU, bufferSize, descriptorSetLayout) ==>  #NOTE: we write now to 'bufferGPU', not 'bufferStaging'
-                                      &descriptorPool, &descriptorSet, imageSamplers, imageViews);      // (descriptorPool, descriptorSet, imageSamplers, imageViews)
-
-      std::cout << "compiling shaders  ... " << std::endl;
-      createComputePipeline(device, descriptorSetLayout,
-                            &computeShaderModule, &pipeline, &pipelineLayout);
-
-      createCommandBuffer(device, queueFamilyIndex, pipeline, pipelineLayout,
-                          &commandPool, &commandBuffer);
-
-      // load texture data to GPU
-      {
-        createDynamicBuffer(device, physicalDevice, w*h*sizeof(float)*4,
-                            &bufferDynamic, &bufferMemoryDynamic);
-
-        putImageToGPU(device, bufferMemoryDynamic, w, h, imageData.data()); // bufferMemoryDynamic <== imageData.data()
-
-        vkResetCommandBuffer(commandBuffer, 0);
-
-        recordCommandsOfImageProcessing(commandBuffer, pipeline, w, h, bufferDynamic,
-                                        imageGPU, bufferStaging);
-
-        std::cout << "doing filter computations ... " << std::endl;
-        runCommandBuffer(commandBuffer, queue, device);
-      }
-
-
-      // main shader
-      {
-        recordCommandsOfExecuteAndTransfer(commandBuffer, pipeline, pipelineLayout, descriptorSet, imageGPU[0],
-                                           bufferSize, bufferGPU, bufferStaging);
-
-        // Finally, run the recorded command bufferStaging.
-        std::cout << "doing computations ... " << std::endl;
-        runCommandBuffer(commandBuffer, queue, device);
-
-        // The former command rendered a mandelbrot set to a bufferStaging.
-        // Save that bufferStaging as a png on disk.
-        std::cout << "geting image back  ... " << std::endl;
-        //saveRenderedImageFromDeviceMemory(device, bufferMemoryStaging, 0, WIDTH, HEIGHT);
-
-        std::vector<uint32_t> resultData(WIDTH*HEIGHT);
-
-        getImageFromGPU(device, bufferMemoryStaging, WIDTH, HEIGHT,
-                        resultData.data());
-
-        std::cout << "saving image       ... " << std::endl;
-        SaveBMP("mandelbrot.bmp", resultData.data(), WIDTH, HEIGHT);
-        resultData = std::vector<uint32_t>();
-
-        std::cout << std::endl;
-      }
-
-      // Clean up all vulkan resources.
-      std::cout << "destroying all     ... " << std::endl;
-      cleanup();
-    }
-
     static void getImageFromGPU(VkDevice a_device, VkDeviceMemory a_stagingMem, int w, int h,
                                 uint32_t *imageData)
     {
@@ -954,6 +842,106 @@ public:
       vkDestroyDevice(device, NULL);
       vkDestroyInstance(instance, NULL);
     }
+
+    void run()
+    {
+     const int deviceId = 0;
+     std::cout << "init vulkan for device " << deviceId << " ... " << std::endl;
+
+     instance = vk_utils::CreateInstance(enableValidationLayers, enabledLayers);
+     if(enableValidationLayers)
+     {
+       vk_utils::InitDebugReportCallback(instance,
+                                         &debugReportCallbackFn, &debugReportCallback);
+     }
+
+     physicalDevice = vk_utils::FindPhysicalDevice(instance, true, deviceId);
+
+     /*
+     Groups of queues that have the same capabilities(for instance, they all supports graphics and computer operations),
+     are grouped into queue families
+     When submitting a command bufferStaging, you must specify to which queue in the family you are submitting to.
+     This variable keeps track of the index of that queue in its family.
+     */
+     uint32_t queueFamilyIndex = vk_utils::GetComputeQueueFamilyIndex(physicalDevice);
+     device = vk_utils::CreateLogicalDevice(queueFamilyIndex, physicalDevice, enabledLayers);
+     vkGetDeviceQueue(device, queueFamilyIndex, 0, &queue);
+
+     // Buffer size of the storage bufferStaging that will contain the rendered mandelbrot set.
+     size_t bufferSize = sizeof(Pixel) * WIDTH * HEIGHT;
+     std::cout << "creating resources ... " << std::endl;
+     createStagingBuffer(device, physicalDevice, bufferSize,      // very simple example of allocation
+                         &bufferStaging, &bufferMemoryStaging);   // (device, bufferSize) ==> (bufferStaging, bufferMemoryStaging)
+
+     createWriteOnlyBuffer(device, physicalDevice, bufferSize,    // very simple example of allocation
+                           &bufferGPU, &bufferMemoryGPU);         // (device, bufferSize) ==> (bufferGPU, bufferMemoryGPU)
+
+     // test image filter pipeline here ... temp solution
+     //
+     int w,h;
+     auto imageData = LoadBMP("texture1.bmp", &w, &h);
+     if(imageData.size() == 0)
+     {
+       std::cout << "can't load texture 'texture1.bmp' " << std::endl;
+       return;
+     }
+
+     createTwoRWTextures(device, physicalDevice, w, h,
+                         imageGPU, &imagesMemoryGPU);
+
+     createDescriptorSetLayout(device, &descriptorSetLayout);                                          // here we will create a binding of bufferStaging to shader via descriptorSet
+     createDescriptorSetForOurBuffer(device, bufferGPU, bufferSize, &descriptorSetLayout, imageGPU[0], // (device, bufferGPU, bufferSize, descriptorSetLayout) ==>  #NOTE: we write now to 'bufferGPU', not 'bufferStaging'
+                                     &descriptorPool, &descriptorSet, imageSamplers, imageViews);      // (descriptorPool, descriptorSet, imageSamplers, imageViews)
+
+     std::cout << "compiling shaders  ... " << std::endl;
+     createComputePipeline(device, descriptorSetLayout,
+                           &computeShaderModule, &pipeline, &pipelineLayout);
+
+     createCommandBuffer(device, queueFamilyIndex, pipeline, pipelineLayout,
+                         &commandPool, &commandBuffer);
+
+     // load texture data to GPU
+     {
+       createDynamicBuffer(device, physicalDevice, w*h*sizeof(float)*4,
+                           &bufferDynamic, &bufferMemoryDynamic);
+
+       putImageToGPU(device, bufferMemoryDynamic, w, h, imageData.data()); // bufferMemoryDynamic <== imageData.data()
+
+       vkResetCommandBuffer(commandBuffer, 0);
+       recordCommandsOfImageProcessing(commandBuffer, pipeline, w, h, bufferDynamic,
+                                       imageGPU, bufferStaging);
+
+       std::cout << "doing some computations ... " << std::endl;
+       runCommandBuffer(commandBuffer, queue, device);
+     }
+
+
+     // main shader
+     {
+       recordCommandsOfExecuteAndTransfer(commandBuffer, pipeline, pipelineLayout, descriptorSet, imageGPU[0],
+                                          bufferSize, bufferGPU, bufferStaging);
+       // Finally, run the recorded command bufferStaging.
+       std::cout << "doing computations ... " << std::endl;
+       runCommandBuffer(commandBuffer, queue, device);
+       // The former command rendered a mandelbrot set to a bufferStaging.
+       // Save that bufferStaging as a png on disk.
+       std::cout << "geting image back  ... " << std::endl;
+       //saveRenderedImageFromDeviceMemory(device, bufferMemoryStaging, 0, WIDTH, HEIGHT);
+       std::vector<uint32_t> resultData(WIDTH*HEIGHT);
+       getImageFromGPU(device, bufferMemoryStaging, WIDTH, HEIGHT,
+                       resultData.data());
+
+       std::cout << "saving image       ... " << std::endl;
+       SaveBMP("mandelbrot.bmp", resultData.data(), WIDTH, HEIGHT);
+       resultData = std::vector<uint32_t>();
+       std::cout << std::endl;
+     }
+
+     // Clean up all vulkan resources.
+     std::cout << "destroying all     ... " << std::endl;
+     cleanup();
+
+   }
 };
 
 int main()
