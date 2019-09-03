@@ -169,29 +169,6 @@ public:
       createCommandBuffer(device, queueFamilyIndex, pipeline, pipelineLayout,
                           &commandPool, &commandBuffer);
 
-      recordCommandsOfExecuteAndTransfer(commandBuffer, pipeline, pipelineLayout, descriptorSet, imageGPU[0],
-                                         bufferSize, bufferGPU, bufferStaging);
-
-      // Finally, run the recorded command bufferStaging.
-      std::cout << "doing computations ... " << std::endl;
-      runCommandBuffer(commandBuffer, queue, device);
-
-      // The former command rendered a mandelbrot set to a bufferStaging.
-      // Save that bufferStaging as a png on disk.
-      std::cout << "geting image back  ... " << std::endl;
-      //saveRenderedImageFromDeviceMemory(device, bufferMemoryStaging, 0, WIDTH, HEIGHT);
-
-      std::vector<uint32_t> resultData(WIDTH*HEIGHT);
-
-      getImageFromGPU(device, bufferMemoryStaging, WIDTH, HEIGHT,
-                      resultData.data());
-
-      std::cout << "saving image       ... " << std::endl;
-      SaveBMP("mandelbrot.bmp", resultData.data(), WIDTH, HEIGHT);
-      resultData = std::vector<uint32_t>();
-
-      std::cout << std::endl;
-
       // test image filter pipeline here ... temp solution
       //
       int w,h;
@@ -218,6 +195,32 @@ public:
 
         std::cout << "saving image       ... " << std::endl;
         SaveBMP("texture1_out.bmp", imageData.data(), w, h);
+      }
+
+      // main shader
+      {
+        recordCommandsOfExecuteAndTransfer(commandBuffer, pipeline, pipelineLayout, descriptorSet, imageGPU[0],
+                                           bufferSize, bufferGPU, bufferStaging);
+
+        // Finally, run the recorded command bufferStaging.
+        std::cout << "doing computations ... " << std::endl;
+        runCommandBuffer(commandBuffer, queue, device);
+
+        // The former command rendered a mandelbrot set to a bufferStaging.
+        // Save that bufferStaging as a png on disk.
+        std::cout << "geting image back  ... " << std::endl;
+        //saveRenderedImageFromDeviceMemory(device, bufferMemoryStaging, 0, WIDTH, HEIGHT);
+
+        std::vector<uint32_t> resultData(WIDTH*HEIGHT);
+
+        getImageFromGPU(device, bufferMemoryStaging, WIDTH, HEIGHT,
+                        resultData.data());
+
+        std::cout << "saving image       ... " << std::endl;
+        SaveBMP("mandelbrot.bmp", resultData.data(), WIDTH, HEIGHT);
+        resultData = std::vector<uint32_t>();
+
+        std::cout << std::endl;
       }
 
       // Clean up all vulkan resources.
@@ -664,6 +667,35 @@ public:
       VK_CHECK_RESULT(vkAllocateCommandBuffers(a_device, &commandBufferAllocateInfo, a_pCmdBuff)); // allocate command bufferStaging.
     }
 
+    ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+    ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+    static VkImageMemoryBarrier imBarTransfer(VkImage a_image, const VkImageSubresourceRange& a_range, VkImageLayout before, VkImageLayout after) // VkImageLayout
+    {
+      VkImageMemoryBarrier moveToGeneralBar = {};
+      moveToGeneralBar.sType               = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+      moveToGeneralBar.pNext               = nullptr;
+      moveToGeneralBar.srcAccessMask       = 0;
+      moveToGeneralBar.dstAccessMask       = VK_PIPELINE_STAGE_TRANSFER_BIT;
+      moveToGeneralBar.oldLayout           = before;
+      moveToGeneralBar.newLayout           = after;
+      moveToGeneralBar.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+      moveToGeneralBar.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+      moveToGeneralBar.image               = a_image;
+      moveToGeneralBar.subresourceRange    = a_range;
+      return moveToGeneralBar;
+    }
+
+    static VkImageSubresourceRange WholeImageRange()
+    {
+      VkImageSubresourceRange rangeWholeImage = {};
+      rangeWholeImage.aspectMask     = VK_IMAGE_ASPECT_COLOR_BIT;
+      rangeWholeImage.baseMipLevel   = 0;
+      rangeWholeImage.levelCount     = 1;
+      rangeWholeImage.baseArrayLayer = 0;
+      rangeWholeImage.layerCount     = 1;
+      return rangeWholeImage;
+    }
 
     static void recordCommandsOfExecuteAndTransfer(VkCommandBuffer a_cmdBuff, VkPipeline a_pipeline, VkPipelineLayout a_layout, const VkDescriptorSet& a_ds, VkImage a_image,
                                                    size_t a_bufferSize, VkBuffer a_bufferGPU, VkBuffer a_bufferStaging)
@@ -759,24 +791,6 @@ public:
       VK_CHECK_RESULT(vkEndCommandBuffer(a_cmdBuff)); // end recording commands.
     }
 
-    ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-    ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-    static VkImageMemoryBarrier imBarTransfer(VkImage a_image, const VkImageSubresourceRange& a_range, VkImageLayout before, VkImageLayout after) // VkImageLayout
-    {
-      VkImageMemoryBarrier moveToGeneralBar = {};
-      moveToGeneralBar.sType               = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-      moveToGeneralBar.pNext               = nullptr;
-      moveToGeneralBar.srcAccessMask       = 0;
-      moveToGeneralBar.dstAccessMask       = VK_PIPELINE_STAGE_TRANSFER_BIT;
-      moveToGeneralBar.oldLayout           = before;
-      moveToGeneralBar.newLayout           = after;
-      moveToGeneralBar.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-      moveToGeneralBar.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-      moveToGeneralBar.image               = a_image;
-      moveToGeneralBar.subresourceRange    = a_range;
-      return moveToGeneralBar;
-    }
 
     static void recordCommandsOfImageProcessing(VkCommandBuffer a_cmdBuff, VkPipeline a_pipeline, int a_width, int a_height, VkBuffer a_bufferDynamic,
                                                 VkImage a_images[2], VkBuffer a_bufferStaging)
@@ -792,12 +806,8 @@ public:
 
       // we want to work with the whole image
       //
-      VkImageSubresourceRange rangeWholeImage = {};
-      rangeWholeImage.aspectMask     = VK_IMAGE_ASPECT_COLOR_BIT;
-      rangeWholeImage.baseMipLevel   = 0;
-      rangeWholeImage.levelCount     = 1;
-      rangeWholeImage.baseArrayLayer = 0;
-      rangeWholeImage.layerCount     = 1;
+      VkImageSubresourceRange rangeWholeImage = WholeImageRange();
+
 
       VkImageSubresourceLayers shittylayers = {};
       shittylayers.aspectMask     = VK_IMAGE_ASPECT_COLOR_BIT;
