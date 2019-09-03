@@ -283,7 +283,7 @@ public:
       imgCreateInfo.pNext         = nullptr;
       imgCreateInfo.flags         = 0; // not sure about this ...
       imgCreateInfo.imageType     = VK_IMAGE_TYPE_2D;
-      imgCreateInfo.format        = VK_FORMAT_R32G32B32A32_SFLOAT; // we create float4 texture just to keep things simple, this is and example at least ...
+      imgCreateInfo.format        = VK_FORMAT_R8G8B8A8_UNORM; // we create float4 texture just to keep things simple, this is and example at least ...
       imgCreateInfo.extent        = VkExtent3D{uint32_t(a_width), uint32_t(a_height), 1};
       imgCreateInfo.mipLevels     = 1;
       imgCreateInfo.samples       = VK_SAMPLE_COUNT_1_BIT;
@@ -436,7 +436,7 @@ public:
         imageViewInfo.sType      = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
         imageViewInfo.flags      = 0;
         imageViewInfo.viewType   = VK_IMAGE_VIEW_TYPE_2D;
-        imageViewInfo.format     = VK_FORMAT_R32G32B32A32_SFLOAT;
+        imageViewInfo.format     = VK_FORMAT_R8G8B8A8_UNORM;
         imageViewInfo.components = { VK_COMPONENT_SWIZZLE_R, VK_COMPONENT_SWIZZLE_G, VK_COMPONENT_SWIZZLE_B, VK_COMPONENT_SWIZZLE_A };
         // The subresource range describes the set of mip levels (and array layers) that can be accessed through this image view
         // It's possible to create multiple image views for a single image referring to different (and/or overlapping) ranges of the image
@@ -649,8 +649,8 @@ public:
     }
 
 
-    static void RecordCommandsOfLoadImageToGPU(VkCommandBuffer a_cmdBuff, VkPipeline a_pipeline, int a_width, int a_height, VkBuffer a_bufferDynamic,
-                                               VkImage *a_images, VkBuffer a_bufferStaging)
+    static void RecordCommandsOfCopyImageDataToTexture(VkCommandBuffer a_cmdBuff, VkPipeline a_pipeline, int a_width, int a_height, VkBuffer a_bufferDynamic,
+                                                       VkImage *a_images, VkBuffer a_bufferStaging)
     {
       //// Now we shall start recording commands into the newly allocated command bufferStaging.
       //
@@ -892,14 +892,20 @@ public:
 
      // load texture data to GPU
      {
-       CreateDynamicBuffer(device, physicalDevice, w * h * sizeof(float) * 4,
+       CreateDynamicBuffer(device, physicalDevice, w*h*sizeof(int),
                            &bufferDynamic, &bufferMemoryDynamic);
 
-       PutImageToGPU(device, bufferMemoryDynamic, w, h, imageData.data()); // bufferMemoryDynamic <== imageData.data()
+       //PutImageToGPU(device, bufferMemoryDynamic, w, h, imageData.data()); // bufferMemoryDynamic <== imageData.data()
+       {
+         void *mappedMemory = nullptr;
+         vkMapMemory(device, bufferMemoryDynamic, 0, w*h*sizeof(int), 0, &mappedMemory);
+         memcpy(mappedMemory, imageData.data(), w*h*sizeof(int));
+         vkUnmapMemory(device, bufferMemoryDynamic);
+       }
 
        vkResetCommandBuffer(commandBuffer, 0);
-       RecordCommandsOfLoadImageToGPU(commandBuffer, pipeline, w, h, bufferDynamic,
-                                      &imageGPU, bufferStaging);
+       RecordCommandsOfCopyImageDataToTexture(commandBuffer, pipeline, w, h, bufferDynamic, // bufferDynamic ==> imageGPU
+                                              &imageGPU, bufferStaging);
 
        std::cout << "doing some computations ... " << std::endl;
        RunCommandBuffer(commandBuffer, queue, device);
