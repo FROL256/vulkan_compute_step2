@@ -95,9 +95,9 @@ private:
     // we change this sample to work with textures
     //
     VkDeviceMemory imagesMemoryGPU;
-    VkImage        imageGPU     [2];
-    VkSampler      imageSamplers[2];
-    VkImageView    imageViews   [2];
+    VkImage        imageGPU;
+    VkSampler      imageSampler;
+    VkImageView    imageView;
 
 
     std::vector<const char *> enabledLayers;
@@ -116,7 +116,7 @@ private:
 public:
     ComputeApplication() : bufferDynamic(NULL), bufferMemoryDynamic(NULL) { }
 
-    static void getImageFromGPU(VkDevice a_device, VkDeviceMemory a_stagingMem, int w, int h,
+    static void GetImageFromGPU(VkDevice a_device, VkDeviceMemory a_stagingMem, int w, int h,
                                 uint32_t *imageData)
     {
       void *mappedMemory = nullptr;
@@ -133,7 +133,7 @@ public:
       vkUnmapMemory(a_device, a_stagingMem);
     }
 
-    static void putImageToGPU(VkDevice a_device, VkDeviceMemory a_dynamicMem, int w, int h, const uint32_t *a_imageData)
+    static void PutImageToGPU(VkDevice a_device, VkDeviceMemory a_dynamicMem, int w, int h, const uint32_t *a_imageData)
     {
       void *mappedMemory = nullptr;
       vkMapMemory(a_device, a_dynamicMem, 0, w * h * sizeof(float) * 4, 0, &mappedMemory);
@@ -169,7 +169,7 @@ public:
     }
 
 
-    static void createStagingBuffer(VkDevice a_device, VkPhysicalDevice a_physDevice, const size_t a_bufferSize,
+    static void CreateStagingBuffer(VkDevice a_device, VkPhysicalDevice a_physDevice, const size_t a_bufferSize,
                                     VkBuffer *a_pBuffer, VkDeviceMemory *a_pBufferMemory)
     {
       /*
@@ -214,7 +214,7 @@ public:
     }
 
 
-    static void createDynamicBuffer(VkDevice a_device, VkPhysicalDevice a_physDevice, const size_t a_bufferSize,
+    static void CreateDynamicBuffer(VkDevice a_device, VkPhysicalDevice a_physDevice, const size_t a_bufferSize,
                                     VkBuffer *a_pBuffer, VkDeviceMemory *a_pBufferMemory)
     {
       VkBufferCreateInfo bufferCreateInfo = {};
@@ -239,7 +239,7 @@ public:
     }
 
 
-    static void createWriteOnlyBuffer(VkDevice a_device, VkPhysicalDevice a_physDevice, const size_t a_bufferSize,
+    static void CreateWriteOnlyBuffer(VkDevice a_device, VkPhysicalDevice a_physDevice, const size_t a_bufferSize,
                                       VkBuffer *a_pBuffer, VkDeviceMemory *a_pBufferMemory)
     {
       /*
@@ -273,8 +273,8 @@ public:
       VK_CHECK_RESULT(vkBindBufferMemory(a_device, (*a_pBuffer), (*a_pBufferMemory), 0));
     }
 
-    static void createTwoRWTextures(VkDevice a_device, VkPhysicalDevice a_physDevice, const int a_width, const int a_height,
-                                    VkImage a_images[2], VkDeviceMemory *a_pImagesMemory)
+    static void CreateTexture(VkDevice a_device, VkPhysicalDevice a_physDevice, const int a_width, const int a_height,
+                              VkImage *a_images, VkDeviceMemory *a_pImagesMemory)
     {
       // first create desired objects, but still don't allocate memory for them
       //
@@ -294,26 +294,22 @@ public:
       imgCreateInfo.arrayLayers   = 1;
 
       VK_CHECK_RESULT(vkCreateImage(a_device, &imgCreateInfo, nullptr, a_images + 0));
-      VK_CHECK_RESULT(vkCreateImage(a_device, &imgCreateInfo, nullptr, a_images + 1));
 
       // now allocate memory for both images
       //
-      VkMemoryRequirements memoryRequirements[2];
-      vkGetImageMemoryRequirements(a_device, a_images[0], memoryRequirements + 0);
-      vkGetImageMemoryRequirements(a_device, a_images[1], memoryRequirements + 1);
+      VkMemoryRequirements memoryRequirements;
+      vkGetImageMemoryRequirements(a_device, a_images[0], &memoryRequirements);
 
       VkMemoryAllocateInfo allocateInfo = {};
       allocateInfo.sType           = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-      allocateInfo.allocationSize  = memoryRequirements[0].size + memoryRequirements[1].size; // specify required memory.
-      allocateInfo.memoryTypeIndex = vk_utils::FindMemoryType(memoryRequirements[0].memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, a_physDevice);
+      allocateInfo.allocationSize  = memoryRequirements.size; // specify required memory.
+      allocateInfo.memoryTypeIndex = vk_utils::FindMemoryType(memoryRequirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, a_physDevice);
 
       VK_CHECK_RESULT(vkAllocateMemory(a_device, &allocateInfo, NULL, a_pImagesMemory)); // allocate memory on device.
-
       VK_CHECK_RESULT(vkBindImageMemory(a_device, a_images[0], (*a_pImagesMemory), 0));
-      VK_CHECK_RESULT(vkBindImageMemory(a_device, a_images[1], (*a_pImagesMemory), memoryRequirements[0].size));
     }
 
-    static void createDescriptorSetLayout(VkDevice a_device, VkDescriptorSetLayout* a_pDSLayout)
+    static void CreateDescriptorSetLayout(VkDevice a_device, VkDescriptorSetLayout *a_pDSLayout)
     {
        /*
        Here we specify a binding of type VK_DESCRIPTOR_TYPE_STORAGE_BUFFER to the binding point 0.
@@ -346,8 +342,10 @@ public:
        VK_CHECK_RESULT(vkCreateDescriptorSetLayout(a_device, &descriptorSetLayoutCreateInfo, NULL, a_pDSLayout));
     }
 
-    static void createDescriptorSetForOurBuffer(VkDevice a_device, VkBuffer a_buffer, size_t a_bufferSize, const VkDescriptorSetLayout* a_pDSLayout, VkImage a_image,
-                                                VkDescriptorPool* a_pDSPool, VkDescriptorSet* a_pDS, VkSampler* a_samplers, VkImageView* a_views)
+    static void CreateDescriptorSetForOurBufferAndTexture(VkDevice a_device, VkBuffer a_buffer, size_t a_bufferSize,
+                                                          const VkDescriptorSetLayout *a_pDSLayout, VkImage a_image,
+                                                          VkDescriptorPool *a_pDSPool, VkDescriptorSet *a_pDS,
+                                                          VkSampler *a_samplers, VkImageView *a_views)
     {
       /*
       So we will allocate a descriptor set here.
@@ -386,9 +384,11 @@ public:
       VK_CHECK_RESULT(vkAllocateDescriptorSets(a_device, &descriptorSetAllocateInfo, a_pDS));
 
       /*
-      Next, we need to connect our actual storage bufferStaging with the descrptor.
+      Next, we need to connect our actual storage buffer with the descriptor.
       We use vkUpdateDescriptorSets() to update the descriptor set.
       */
+
+      /////////////////////////////////////////////////////////////////////////////////////////////////////////////// bind buffer
 
       // Specify the bufferStaging to bind to the descriptor.
       VkDescriptorBufferInfo descriptorBufferInfo = {};
@@ -407,7 +407,7 @@ public:
       // perform the update of the descriptor set.
       vkUpdateDescriptorSets(a_device, 1, &writeDescriptorSet, 0, NULL);
 
-      ///////////////////////////////////////////////////////////////////////////////////////////////////////////////
+      /////////////////////////////////////////////////////////////////////////////////////////////////////////////// bind texture
 
       VkSamplerCreateInfo samplerInfo = {};
       {
@@ -467,8 +467,9 @@ public:
       vkUpdateDescriptorSets(a_device, 1, &writeDescriptorSet2, 0, NULL);
     }
 
-    static void createComputePipeline(VkDevice a_device, const VkDescriptorSetLayout& a_dsLayout,
-                                      VkShaderModule* a_pShaderModule, VkPipeline* a_pPipeline, VkPipelineLayout* a_pPipelineLayout)
+    static void CreateComputePipeline(VkDevice a_device, const VkDescriptorSetLayout &a_dsLayout,
+                                      VkShaderModule *a_pShaderModule, VkPipeline *a_pPipeline,
+                                      VkPipelineLayout *a_pPipelineLayout)
     {
       //Create a shader module. A shader module basically just encapsulates some shader code.
       //
@@ -524,8 +525,8 @@ public:
       VK_CHECK_RESULT(vkCreateComputePipelines(a_device, VK_NULL_HANDLE, 1, &pipelineCreateInfo, NULL, a_pPipeline));
     }
 
-    static void createCommandBuffer(VkDevice a_device, uint32_t queueFamilyIndex, VkPipeline a_pipeline, VkPipelineLayout a_layout,
-                                    VkCommandPool* a_pool, VkCommandBuffer* a_pCmdBuff)
+    static void CreateCommandBuffer(VkDevice a_device, uint32_t queueFamilyIndex, VkPipeline a_pipeline, VkPipelineLayout a_layout,
+                                    VkCommandPool *a_pool, VkCommandBuffer *a_pCmdBuff)
     {
       /*
       We are getting closer to the end. In order to send commands to the device(GPU),
@@ -585,7 +586,7 @@ public:
       return rangeWholeImage;
     }
 
-    static void recordCommandsOfExecuteAndTransfer(VkCommandBuffer a_cmdBuff, VkPipeline a_pipeline, VkPipelineLayout a_layout, const VkDescriptorSet& a_ds, VkImage a_image,
+    static void RecordCommandsOfExecuteAndTransfer(VkCommandBuffer a_cmdBuff, VkPipeline a_pipeline,VkPipelineLayout a_layout, const VkDescriptorSet &a_ds, VkImage a_image,
                                                    size_t a_bufferSize, VkBuffer a_bufferGPU, VkBuffer a_bufferStaging)
     {
       /*
@@ -597,36 +598,6 @@ public:
       VK_CHECK_RESULT(vkBeginCommandBuffer(a_cmdBuff, &beginInfo)); // start recording commands.
 
       vkCmdFillBuffer(a_cmdBuff, a_bufferStaging, 0, a_bufferSize, 0); // clear this buffer just for an example and test cases. if we comment 'vkCmdCopyBuffer', we'll get black image
-
-
-      // transfer our texture to VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL from VK_IMAGE_LAYOUT_UNDEFINED
-      VkImageMemoryBarrier imgBar = {}; // imBarTransfer(a_image, WholeImageRange(), VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-      {
-        imgBar.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-        imgBar.pNext = nullptr;
-        imgBar.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        imgBar.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-
-        imgBar.srcAccessMask       = 0;
-        imgBar.dstAccessMask       = VK_ACCESS_SHADER_READ_BIT;
-        imgBar.oldLayout           = VK_IMAGE_LAYOUT_UNDEFINED;
-        imgBar.newLayout           = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-        imgBar.image               = a_image;
-
-        imgBar.subresourceRange.aspectMask     = VK_IMAGE_ASPECT_COLOR_BIT;
-        imgBar.subresourceRange.baseMipLevel   = 0;
-        imgBar.subresourceRange.levelCount     = 1;
-        imgBar.subresourceRange.baseArrayLayer = 0;
-        imgBar.subresourceRange.layerCount     = 1;
-      };
-
-      vkCmdPipelineBarrier(a_cmdBuff,
-                           VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,  // VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT
-                           VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-                           0,
-                           0, nullptr,
-                           0, nullptr,
-                           1, &imgBar);
 
       /*
       We need to bind a pipeline, AND a descriptor set before we dispatch
@@ -645,9 +616,8 @@ public:
       */
       vkCmdDispatch(a_cmdBuff, (uint32_t)ceil(WIDTH / float(WORKGROUP_SIZE)), (uint32_t)ceil(HEIGHT / float(WORKGROUP_SIZE)), 1);
 
-
       // copy data from bufferGPU to bufferStaging. #NOTE: this is new!!!
-      //
+      // at first, transfer buffer from 'VK_ACCESS_SHADER_WRITE_BIT' to 'VK_ACCESS_TRANSFER_READ_BIT' state
 
       VkBufferMemoryBarrier bufBarr = {};
       bufBarr.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;
@@ -679,8 +649,8 @@ public:
     }
 
 
-    static void recordCommandsOfImageProcessing(VkCommandBuffer a_cmdBuff, VkPipeline a_pipeline, int a_width, int a_height, VkBuffer a_bufferDynamic,
-                                                VkImage a_images[2], VkBuffer a_bufferStaging)
+    static void RecordCommandsOfLoadImageToGPU(VkCommandBuffer a_cmdBuff, VkPipeline a_pipeline, int a_width, int a_height, VkBuffer a_bufferDynamic,
+                                               VkImage *a_images, VkBuffer a_bufferStaging)
     {
       //// Now we shall start recording commands into the newly allocated command bufferStaging.
       //
@@ -712,11 +682,7 @@ public:
 
       // at first we must move our images to 'VK_IMAGE_LAYOUT_GENERAL' layout to further clear them
       //
-      VkImageMemoryBarrier moveToGeneralBar[2];
-      {
-        moveToGeneralBar[0] = imBarTransfer(a_images[0], rangeWholeImage, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
-        moveToGeneralBar[1] = imBarTransfer(a_images[1], rangeWholeImage, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
-      }
+      VkImageMemoryBarrier moveToGeneralBar = imBarTransfer(a_images[0], rangeWholeImage, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
 
       vkCmdPipelineBarrier(a_cmdBuff,
                            VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
@@ -724,7 +690,7 @@ public:
                            0,
                            0, nullptr,           // general memory barriers
                            0, nullptr,           // buffer barriers
-                           2, moveToGeneralBar); // image  barriers
+                           1, &moveToGeneralBar); // image  barriers
 
       // now we can clear images
       //
@@ -735,11 +701,37 @@ public:
       clearVal.float32[3] = 1.0f;
 
       vkCmdClearColorImage(a_cmdBuff, a_images[0], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &clearVal, 1, &rangeWholeImage); // clear image with (1,1,1,1)
-      vkCmdClearColorImage(a_cmdBuff, a_images[1], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &clearVal, 1, &rangeWholeImage); // clear image with (1,1,1,1)
 
       vkCmdCopyBufferToImage(a_cmdBuff, a_bufferDynamic, a_images[0], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &wholeRegion);
-      vkCmdCopyBufferToImage(a_cmdBuff, a_bufferDynamic, a_images[1], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &wholeRegion);
 
+      // transfer our texture from VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL to VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
+      VkImageMemoryBarrier imgBar = {}; //imBarTransfer(a_images[0], rangeWholeImage, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+      {
+        imgBar.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+        imgBar.pNext = nullptr;
+        imgBar.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        imgBar.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+
+        imgBar.srcAccessMask       = 0;
+        imgBar.dstAccessMask       = VK_ACCESS_SHADER_READ_BIT;
+        imgBar.oldLayout           = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+        imgBar.newLayout           = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        imgBar.image               = a_images[0];
+
+        imgBar.subresourceRange.aspectMask     = VK_IMAGE_ASPECT_COLOR_BIT;
+        imgBar.subresourceRange.baseMipLevel   = 0;
+        imgBar.subresourceRange.levelCount     = 1;
+        imgBar.subresourceRange.baseArrayLayer = 0;
+        imgBar.subresourceRange.layerCount     = 1;
+      };
+
+      vkCmdPipelineBarrier(a_cmdBuff,
+                           VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                           VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                           0,
+                           0, nullptr,
+                           0, nullptr,
+                           1, &imgBar);
 
       //VkImageMemoryBarrier barForCopy[2];
       //barForCopy[0] = imBarTransfer(a_images[0], rangeWholeImage, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
@@ -756,14 +748,13 @@ public:
       //vkCmdCopyImageToBuffer(a_cmdBuff, a_images[1], VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, a_bufferStaging, 1, &wholeRegion);
 
 
-
       VK_CHECK_RESULT(vkEndCommandBuffer(a_cmdBuff)); // end recording commands.
     }
 
     ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
     ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-    static void runCommandBuffer(VkCommandBuffer a_cmdBuff, VkQueue a_queue, VkDevice a_device)
+    static void RunCommandBuffer(VkCommandBuffer a_cmdBuff, VkQueue a_queue, VkDevice a_device)
     {
       /*
       Now we shall finally submit the recorded command bufferStaging to a queue.
@@ -799,7 +790,7 @@ public:
       vkDestroyFence(a_device, fence, NULL);
     }
 
-    void cleanup()
+    void Cleanup()
     {
       /*
       Clean up all Vulkan Resources.
@@ -827,11 +818,10 @@ public:
       vkDestroyBuffer(device, bufferGPU, NULL);
 
       vkFreeMemory  (device, imagesMemoryGPU, NULL);
-      vkDestroyImage(device, imageGPU[0], NULL);
-      vkDestroyImage(device, imageGPU[1], NULL);
+      vkDestroyImage(device, imageGPU, NULL);
 
-      vkDestroyImageView(device, imageViews[0], NULL);
-      vkDestroySampler(device, imageSamplers[0], NULL);
+      vkDestroyImageView(device, imageView, NULL);
+      vkDestroySampler(device, imageSampler, NULL);
 
       vkDestroyShaderModule(device, computeShaderModule, NULL);
       vkDestroyDescriptorPool(device, descriptorPool, NULL);
@@ -843,7 +833,7 @@ public:
       vkDestroyInstance(instance, NULL);
     }
 
-    void run()
+    void Run()
     {
      const int deviceId = 0;
      std::cout << "init vulkan for device " << deviceId << " ... " << std::endl;
@@ -870,11 +860,11 @@ public:
      // Buffer size of the storage bufferStaging that will contain the rendered mandelbrot set.
      size_t bufferSize = sizeof(Pixel) * WIDTH * HEIGHT;
      std::cout << "creating resources ... " << std::endl;
-     createStagingBuffer(device, physicalDevice, bufferSize,      // very simple example of allocation
-                         &bufferStaging, &bufferMemoryStaging);   // (device, bufferSize) ==> (bufferStaging, bufferMemoryStaging)
+      CreateStagingBuffer(device, physicalDevice, bufferSize,      // very simple example of allocation
+                          &bufferStaging, &bufferMemoryStaging);   // (device, bufferSize) ==> (bufferStaging, bufferMemoryStaging)
 
-     createWriteOnlyBuffer(device, physicalDevice, bufferSize,    // very simple example of allocation
-                           &bufferGPU, &bufferMemoryGPU);         // (device, bufferSize) ==> (bufferGPU, bufferMemoryGPU)
+      CreateWriteOnlyBuffer(device, physicalDevice, bufferSize,    // very simple example of allocation
+                            &bufferGPU, &bufferMemoryGPU);         // (device, bufferSize) ==> (bufferGPU, bufferMemoryGPU)
 
      // test image filter pipeline here ... temp solution
      //
@@ -886,49 +876,50 @@ public:
        return;
      }
 
-     createTwoRWTextures(device, physicalDevice, w, h,
-                         imageGPU, &imagesMemoryGPU);
+      CreateTexture(device, physicalDevice, w, h,
+                    &imageGPU, &imagesMemoryGPU);
 
-     createDescriptorSetLayout(device, &descriptorSetLayout);                                          // here we will create a binding of bufferStaging to shader via descriptorSet
-     createDescriptorSetForOurBuffer(device, bufferGPU, bufferSize, &descriptorSetLayout, imageGPU[0], // (device, bufferGPU, bufferSize, descriptorSetLayout) ==>  #NOTE: we write now to 'bufferGPU', not 'bufferStaging'
-                                     &descriptorPool, &descriptorSet, imageSamplers, imageViews);      // (descriptorPool, descriptorSet, imageSamplers, imageViews)
+      CreateDescriptorSetLayout(device, &descriptorSetLayout);                                          // here we will create a binding of bufferStaging to shader via descriptorSet
+      CreateDescriptorSetForOurBufferAndTexture(device, bufferGPU, bufferSize, &descriptorSetLayout,
+                                                imageGPU, // (device, bufferGPU, bufferSize, descriptorSetLayout) ==>  #NOTE: we write now to 'bufferGPU', not 'bufferStaging'
+                                                &descriptorPool, &descriptorSet, &imageSampler, &imageView);      // (descriptorPool, descriptorSet, imageSamplers, imageViews)
 
      std::cout << "compiling shaders  ... " << std::endl;
-     createComputePipeline(device, descriptorSetLayout,
-                           &computeShaderModule, &pipeline, &pipelineLayout);
+      CreateComputePipeline(device, descriptorSetLayout,
+                            &computeShaderModule, &pipeline, &pipelineLayout);
 
-     createCommandBuffer(device, queueFamilyIndex, pipeline, pipelineLayout,
-                         &commandPool, &commandBuffer);
+      CreateCommandBuffer(device, queueFamilyIndex, pipeline, pipelineLayout,
+                          &commandPool, &commandBuffer);
 
      // load texture data to GPU
      {
-       createDynamicBuffer(device, physicalDevice, w*h*sizeof(float)*4,
+       CreateDynamicBuffer(device, physicalDevice, w * h * sizeof(float) * 4,
                            &bufferDynamic, &bufferMemoryDynamic);
 
-       putImageToGPU(device, bufferMemoryDynamic, w, h, imageData.data()); // bufferMemoryDynamic <== imageData.data()
+       PutImageToGPU(device, bufferMemoryDynamic, w, h, imageData.data()); // bufferMemoryDynamic <== imageData.data()
 
        vkResetCommandBuffer(commandBuffer, 0);
-       recordCommandsOfImageProcessing(commandBuffer, pipeline, w, h, bufferDynamic,
-                                       imageGPU, bufferStaging);
+       RecordCommandsOfLoadImageToGPU(commandBuffer, pipeline, w, h, bufferDynamic,
+                                      &imageGPU, bufferStaging);
 
        std::cout << "doing some computations ... " << std::endl;
-       runCommandBuffer(commandBuffer, queue, device);
+       RunCommandBuffer(commandBuffer, queue, device);
      }
 
 
      // main shader
      {
-       recordCommandsOfExecuteAndTransfer(commandBuffer, pipeline, pipelineLayout, descriptorSet, imageGPU[0],
+       RecordCommandsOfExecuteAndTransfer(commandBuffer, pipeline, pipelineLayout, descriptorSet, imageGPU,
                                           bufferSize, bufferGPU, bufferStaging);
        // Finally, run the recorded command bufferStaging.
        std::cout << "doing computations ... " << std::endl;
-       runCommandBuffer(commandBuffer, queue, device);
+       RunCommandBuffer(commandBuffer, queue, device);
        // The former command rendered a mandelbrot set to a bufferStaging.
        // Save that bufferStaging as a png on disk.
        std::cout << "geting image back  ... " << std::endl;
        //saveRenderedImageFromDeviceMemory(device, bufferMemoryStaging, 0, WIDTH, HEIGHT);
        std::vector<uint32_t> resultData(WIDTH*HEIGHT);
-       getImageFromGPU(device, bufferMemoryStaging, WIDTH, HEIGHT,
+       GetImageFromGPU(device, bufferMemoryStaging, WIDTH, HEIGHT,
                        resultData.data());
 
        std::cout << "saving image       ... " << std::endl;
@@ -939,7 +930,7 @@ public:
 
      // Clean up all vulkan resources.
      std::cout << "destroying all     ... " << std::endl;
-     cleanup();
+      Cleanup();
 
    }
 };
@@ -950,7 +941,7 @@ int main()
 
   try
   {
-    app.run();
+    app.Run();
   }
   catch (const std::runtime_error& e)
   {

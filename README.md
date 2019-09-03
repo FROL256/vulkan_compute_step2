@@ -20,7 +20,7 @@ for further info.
 
 Please note **main difference to step1**:
 1) we create 2 buffers (bufferGPU and bufferStaging)
-2) recordCommandsOfExecuteAndTransfer will write to bufferGPU and then transfer data to bufferStaging
+2) RecordCommandsOfExecuteAndTransfer will write to bufferGPU and then transfer data to bufferStaging
 
 ## Building
 
