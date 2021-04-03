@@ -597,7 +597,7 @@ public:
       moveToGeneralBar.sType               = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
       moveToGeneralBar.pNext               = nullptr;
       moveToGeneralBar.srcAccessMask       = 0;
-      moveToGeneralBar.dstAccessMask       = VK_PIPELINE_STAGE_TRANSFER_BIT;
+      moveToGeneralBar.dstAccessMask       = VK_ACCESS_TRANSFER_WRITE_BIT;
       moveToGeneralBar.oldLayout           = before;
       moveToGeneralBar.newLayout           = after;
       moveToGeneralBar.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;

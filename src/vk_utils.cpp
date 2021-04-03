@@ -16,7 +16,7 @@ VkInstance vk_utils::CreateInstance(bool a_enableValidationLayers, std::vector<c
 
   /*
   By enabling validation layers, Vulkan will emit warnings if the API
-  is used incorrectly. We shall enable the layer VK_LAYER_LUNARG_standard_validation,
+  is used incorrectly. We shall enable the layer VK_LAYER_KHRONOS_validation,
   which is basically a collection of several useful validation layers.
   */
   if (a_enableValidationLayers)
@@ -31,12 +31,12 @@ VkInstance vk_utils::CreateInstance(bool a_enableValidationLayers, std::vector<c
     vkEnumerateInstanceLayerProperties(&layerCount, layerProperties.data());
 
     /*
-    And then we simply check if VK_LAYER_LUNARG_standard_validation is among the supported layers.
+    And then we simply check if VK_LAYER_KHRONOS_validation is among the supported layers.
     */
     bool foundLayer = false;
     for (VkLayerProperties prop : layerProperties) {
 
-      if (strcmp("VK_LAYER_LUNARG_standard_validation", prop.layerName) == 0) {
+      if (strcmp("VK_LAYER_KHRONOS_validation", prop.layerName) == 0) {
         foundLayer = true;
         break;
       }
@@ -44,9 +44,9 @@ VkInstance vk_utils::CreateInstance(bool a_enableValidationLayers, std::vector<c
     }
 
     if (!foundLayer)
-      RUN_TIME_ERROR("Layer VK_LAYER_LUNARG_standard_validation not supported\n");
+      RUN_TIME_ERROR("Layer VK_LAYER_KHRONOS_validation not supported\n");
 
-    a_enabledLayers.push_back("VK_LAYER_LUNARG_standard_validation"); // Alright, we can use this layer.
+    a_enabledLayers.push_back("VK_LAYER_KHRONOS_validation"); // Alright, we can use this layer.
 
     /*
     We need to enable an extension named VK_EXT_DEBUG_REPORT_EXTENSION_NAME,
